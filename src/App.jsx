@@ -1,6 +1,8 @@
+import { formatMetric as format, metricChange as delta, normalizeRetentionWeeks, metricShare } from "./utils/metrics.js";
 import { useEffect, useMemo, useState } from "react";
 import {
   ChartCard,
+  DataModeContext,
   Donut,
   HorizontalBars,
   RetentionHeatmap,
@@ -10,8 +12,11 @@ import {
   chartColors,
 } from "./components/Charts.jsx";
 import { loadDashboard } from "./data/dashboardService.js";
+import { DateRangePicker } from "./components/DateRangePicker.jsx";
+import { recentRange } from "./utils/dateRange.js";
 import { checkAdminSession, loginAdmin, logoutAdmin } from "./data/authService.js";
-import { demoData, demoPeriod } from "./data/demoData.js";
+import { ACCOUNT_STATUS_LABELS, ITEM_STATUS_LABELS, TRADE_STATUS_LABELS, NOTIFICATION_LABELS, REPORT_STATUS_LABELS, REPORT_TYPE_LABELS, EVENT_LABELS, displayLabel, dormitoryLabel } from "../shared/dashboard-labels.js";
+
 
 const TABS = [
   { id: "core", label: "핵심 현황" },
@@ -29,14 +34,6 @@ const PAGE_META = {
   funnels: ["퍼널", "가입·등록·거래의 단계별 전환과 이탈 원인 확인", "핵심 카드 → 퍼널 → 병목 비교 → 개선 행동"],
 };
 
-const format = (value, unit = "") => `${Number(value ?? 0).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}${unit}`;
-const delta = (current, previous, percentagePoint = false, inverse = false) => {
-  const c = Number(current || 0);
-  const p = Number(previous || 0);
-  const value = percentagePoint ? c - p : p === 0 ? (c === 0 ? 0 : 100) : ((c - p) / p) * 100;
-  const positive = inverse ? value <= 0 : value >= 0;
-  return { text: `${value >= 0 ? "+" : ""}${value.toFixed(1)}${percentagePoint ? "%p" : "%"}`, positive };
-};
 
 function KpiCard({ label, value, unit, current, previous, percentagePoint = false, inverse = false, note, changeText }) {
   const change = delta(current, previous, percentagePoint, inverse);
@@ -45,7 +42,7 @@ function KpiCard({ label, value, unit, current, previous, percentagePoint = fals
       <span className="kpi-label">{label}</span>
       <strong>{value ?? format(current, unit)}</strong>
       <div className="kpi-foot">
-        <b className={change.positive ? "up" : "down"}>{changeText ?? change.text}</b>
+        <b className={changeText ? "neutral" : change.tone}>{changeText ?? change.text}</b>
         <span>{note}</span>
       </div>
     </article>
@@ -67,7 +64,16 @@ function PageIntro({ page, refreshedAt }) {
 
 function EmptyNotice({ mode }) {
   if (mode !== "live") return null;
-  return <div className="live-notice">실제 데이터 기준으로 계산한 결과입니다. 데이터가 없는 항목은 0으로 표시됩니다.</div>;
+  return <div className="live-notice">실제 저장 데이터 기준. 0은 집계 결과 0건, –는 기록 부족 또는 계산 불가입니다. 지표별 조회 기간과 현재 상태 기준은 각 차트 설명·집계 안내를 참고해주세요.</div>;
+}
+
+function MetricTable({ rows, columns, rowKey, emptyText = "해당 기간 기록 없음" }) {
+  if (!Array.isArray(rows)) return <div className="chart-empty">새 집계 항목은 서버 업데이트 후 표시됩니다.</div>;
+  if (!rows.length) return <div className="chart-empty">{emptyText}</div>;
+  return <div className="metric-table-wrap"><table className="metric-table">
+    <thead><tr>{columns.map(column => <th key={column.key} scope="col">{column.label}</th>)}</tr></thead>
+    <tbody>{rows.map(row => <tr key={row[rowKey]}>{columns.map(column => <td key={column.key} className={column.numeric ? "numeric" : ""}>{column.numeric ? format(row[column.key], column.unit || "") : row[column.key]}</td>)}</tr>)}</tbody>
+  </table></div>;
 }
 
 function CorePage({ data, mode }) {
@@ -78,23 +84,23 @@ function CorePage({ data, mode }) {
     <>
       <EmptyNotice mode={mode} />
       <div className="kpi-grid five">
-        <KpiCard label="최근 7일 거래 완료" current={c.completed_trades} previous={p.completed_trades} unit="건" note="지난 7일 완료 거래" />
-        <KpiCard label="전체 거래 전환율" current={c.trade_conversion_rate} previous={p.trade_conversion_rate} unit="%" percentagePoint note="조회 후 7일 성숙 코호트" />
-        <KpiCard label="판매 성사율" current={c.sale_success_rate} previous={p.sale_success_rate} unit="%" percentagePoint note="예약 후 7일 성숙 코호트" />
+        <KpiCard label="선택 기간 거래 완료" current={c.completed_trades} previous={p.completed_trades} unit="건" note="선택 기간 완료 거래" />
+        <KpiCard label="전체 거래 전환율" current={c.trade_conversion_rate} previous={p.trade_conversion_rate} unit="%" percentagePoint note="상품 조회 후 7일 · 잠정값" />
+        <KpiCard label="판매 성사율" current={c.sale_success_rate} previous={p.sale_success_rate} unit="%" percentagePoint note="상품 등록 후 30일 · 잠정값" />
         <KpiCard label="게스트 → 회원" current={c.guest_conversion_rate} previous={p.guest_conversion_rate} unit="%" percentagePoint note="로그인 요구 후 30일" />
-        <KpiCard label="상품 등록 완료율" current={c.registration_completion_rate} previous={p.registration_completion_rate} unit="%" percentagePoint note="24시간 성숙 코호트" />
+        <KpiCard label="상품 등록 완료율" current={c.registration_completion_rate} previous={p.registration_completion_rate} unit="%" percentagePoint note="등록 시작 후 24시간 · 잠정값" />
       </div>
       <div className="chart-grid">
-        <ChartCard title="최근 7일 거래 완료 추이" subtitle="최근 7일 · 일별 완료 거래" insight="금·일 거래 완료가 높음">
+        <ChartCard title="선택 기간 거래 완료 추이" subtitle="선택 기간 · 일별 완료 거래" insight="금·일 거래 완료가 높음">
           <VerticalBars data={data.completed_trades_daily} xKey="date" valueKey="value" suffix="건" accentLast />
         </ChartCard>
-        <ChartCard title="거래·판매 전환 추이" subtitle="최근 7개 완료주 · 주별 · 성숙 코호트 기준" insight="거래·판매 전환율 모두 상승">
+        <ChartCard title="거래·판매 전환 추이" subtitle="종료일 기준 최근 8주 · 진행 중인 주 포함" insight="거래·판매 전환율 모두 상승">
           <TrendLines data={data.weekly_conversion_trend} xKey="week_start" lines={[{ key: "trade_conversion_rate", name: "거래", suffix: "%", color: chartColors.orange }, { key: "sale_success_rate", name: "판매", suffix: "%", color: chartColors.slate }]} />
         </ChartCard>
-        <ChartCard title="게스트·회원 구성" subtitle="최근 7일 의미 있는 활동 사용자 기준" insight="회원 비중이 안정적으로 유지되는지 확인">
+        <ChartCard title="게스트·회원 구성" subtitle="선택 기간에 행동 이벤트가 기록된 사용자" insight="회원 비중이 안정적으로 유지되는지 확인">
           <Donut data={mix} nameKey="actor_type" valueKey="actors" centerLabel="게스트" />
         </ChartCard>
-        <ChartCard title="로그인 요구 화면별 회원 전환 건수" subtitle="30일 성숙 코호트 · 가입 완료 고유 사용자" insight="채팅 시작에서 회원 전환이 가장 높음">
+        <ChartCard title="로그인 요구 화면별 회원 전환 건수" subtitle="로그인 요구 후 30일 내 가입 · 잠정값" insight="채팅 시작에서 회원 전환이 가장 높음">
           <HorizontalBars data={data.login_required_conversion_by_feature} yKey="feature" valueKey="converted_guests" suffix="명" />
         </ChartCard>
       </div>
@@ -106,14 +112,14 @@ function MembersPage({ data, mode }) {
   const [activityMetric, setActivityMetric] = useState("dau");
   const c = data.kpis.current;
   const p = data.kpis.previous;
-  const status = data.account_status_distribution.map((r) => ({ ...r, status: r.status === "active" ? "활성" : r.status === "dormant" ? "휴면" : r.status === "withdrawn" ? "탈퇴" : r.status }));
+  const status = data.account_status_distribution.map((r) => ({ ...r, status: displayLabel(ACCOUNT_STATUS_LABELS, r.status) }));
   const activity = data.activity_status_distribution.map((r) => ({ ...r, status: r.status === "active" ? "활성 회원" : r.status === "dormant" ? "휴면 회원" : r.status }));
   const platforms = data.platform_distribution.map((r) => ({ ...r, platform: r.platform === "android" ? "Android" : r.platform === "ios" ? "iOS" : r.platform === "web" ? "Web" : r.platform === "pwa" ? "PWA" : r.platform }));
   const statusTotal = status.reduce((sum, row) => sum + Number(row.members || 0), 0);
-  const activeStatus = status.find((row) => row.status === "활성")?.members || 0;
+  const remainingAccounts = data.account_status_distribution.filter((row) => !["withdrawn", "탈퇴", "탈퇴 처리"].includes(row.status)).reduce((sum, row) => sum + Number(row.members || 0), 0);
   const retentionRows = data.retention_cohorts.map((row) => ({
     ...row,
-    weeks: typeof row.weeks?.[0] === "object" ? [100, ...row.weeks.map((week) => week.retention_rate)] : row.weeks,
+    weeks: normalizeRetentionWeeks(row.weeks),
   }));
   const activitySeries = activityMetric === "dau" ? data.dau_trend : activityMetric === "wau" ? data.wau_trend : data.mau_trend;
   const activityXKey = activityMetric === "dau" ? "date" : activityMetric === "wau" ? "week_start" : "month_start";
@@ -121,10 +127,10 @@ function MembersPage({ data, mode }) {
     <>
       <EmptyNotice mode={mode} />
       <div className="kpi-grid five">
-        <KpiCard label="신규 게스트" current={c.new_guests} previous={p.new_guests} unit="명" note="최근 7일 첫 방문" />
-        <KpiCard label="신규 회원" current={c.new_members} previous={p.new_members} unit="명" note="최근 7일 가입 완료" />
-        <KpiCard label="누적 회원" current={c.total_members} previous={p.total_members} unit="명" note="관리자 제외" />
-        <KpiCard label="최근 7일 활성 회원률" current={c.active_member_rate} previous={p.active_member_rate} unit="%" percentagePoint note="활성 회원 ÷ 전체 회원" />
+        <KpiCard label="신규 게스트" current={c.new_guests} previous={p.new_guests} unit="명" note="선택 기간 첫 방문" />
+        <KpiCard label="신규 회원" current={c.new_members} previous={p.new_members} unit="명" note="선택 기간 가입 완료" />
+        <KpiCard label="회원 수" current={c.total_members} previous={p.total_members} unit="명" note="기간 말 · 탈퇴·관리자 제외" />
+        <KpiCard label="선택 기간 활성 회원률" current={c.active_member_rate} previous={p.active_member_rate} unit="%" percentagePoint note="활성 회원 ÷ 전체 회원" />
         <KpiCard label="4주 리텐션" current={c.week_4_retention_rate} previous={p.week_4_retention_rate} unit="%" percentagePoint note="4주 후 재방문" />
       </div>
       <div className="chart-grid">
@@ -134,11 +140,11 @@ function MembersPage({ data, mode }) {
             <div className="metric-tabs" aria-label="활성 사용자 집계 단위">{["dau", "wau", "mau"].map((metric) => <button key={metric} type="button" className={activityMetric === metric ? "active" : ""} onClick={() => setActivityMetric(metric)}>{metric.toUpperCase()}</button>)}</div>
           </div>
         </ChartCard>
-        <ChartCard title="학과별 회원 수" subtitle="현재 시점 · 학교 학과 코드" insight="회원이 적은 학과의 홍보 우선순위를 확인">
+        <ChartCard title="학과별 회원 수" subtitle="선택 종료일 이전 가입 · 현재 남은 계정" insight="회원이 적은 학과의 홍보 우선순위를 확인">
           <HorizontalBars data={data.department_distribution} yKey="department_code" valueKey="members" suffix="명" />
         </ChartCard>
-        <ChartCard title="회원 상태 구성" subtitle="현재 시점 · 활성·휴면·탈퇴" insight="회원 기반의 건강도를 상태 비중으로 판단">
-          <Donut data={status} nameKey="status" valueKey="members" centerValue={`${Math.round((Number(activeStatus) / Math.max(1, statusTotal)) * 100)}%`} centerLabel="활성" />
+        <ChartCard title="회원 상태 구성" subtitle="현재 상태 · 탈퇴 처리 중은 미탈퇴 계정에 포함" insight="회원 기반의 건강도를 상태 비중으로 판단">
+          <Donut data={status} nameKey="status" valueKey="members" centerValue={format(metricShare(remainingAccounts, statusTotal), "%")} centerLabel="미탈퇴 계정" />
         </ChartCard>
         <ChartCard title="누적 회원 수 추이" subtitle="최근 7개 완료주 · 가입 누적 회원" insight="성장 둔화나 정체 시점을 빠르게 발견">
           <TrendLines data={data.cumulative_members_weekly} xKey="week_start" lines={[{ key: "members", name: "누적 회원", suffix: "명", color: chartColors.orange }]} />
@@ -155,11 +161,17 @@ function MembersPage({ data, mode }) {
         <ChartCard title="휴면 기간별 구성" subtitle="마지막 활동 이후 경과일" insight="90일 이상 휴면군을 우선 복귀 대상으로 관리">
           <Donut data={data.dormant_period_distribution} nameKey="bucket" valueKey="members" centerValue={format(data.dormant_period_distribution.reduce((s, x) => s + Number(x.members || 0), 0), "명")} centerLabel="휴면 회원" />
         </ChartCard>
-        <ChartCard title="플랫폼 분포" subtitle="최근 7일 의미 있는 활동 사용자" insight="Android 출시 이후 플랫폼별 활동 비중 확인">
+        <ChartCard title="플랫폼 분포" subtitle="선택 기간 의미 있는 활동 사용자" insight="Android 출시 이후 플랫폼별 활동 비중 확인">
           <Donut data={platforms} nameKey="platform" valueKey="actors" centerValue={format(platforms.reduce((s, x) => s + Number(x.actors || 0), 0), "명")} centerLabel="활동 사용자" />
         </ChartCard>
         <ChartCard title="앱 버전별 활성 사용자" subtitle="플랫폼·앱 버전별 고유 사용자" insight="낮은 버전 사용자의 업데이트 필요 규모를 확인">
-          <HorizontalBars data={data.app_version_distribution.map((r) => ({ ...r, label: `${r.platform === "android" ? "Android" : "iOS"} ${r.app_version}` }))} yKey="label" valueKey="actors" suffix="명" />
+          <HorizontalBars data={data.app_version_distribution.map((r) => ({ ...r, label: `${({ android: "Android", ios: "iOS", web: "Web", pwa: "PWA" })[r.platform] || r.platform} ${r.app_version}` }))} yKey="label" valueKey="actors" suffix="명" />
+        </ChartCard>
+        <ChartCard title="생활관 선택 분포" subtitle="현재 미탈퇴 회원 · 본인 선택값 · 거주 인증 아님">
+          <MetricTable rows={data.dormitory_distribution?.map(row => ({ ...row, label: dormitoryLabel(row.dormitory_code) }))} rowKey="dormitory_code" columns={[{ key: "label", label: "생활관" }, { key: "members", label: "회원 수", numeric: true, unit: "명" }]} />
+        </ChartCard>
+        <ChartCard title="프로필 생활관 공개 설정" subtitle="현재 미탈퇴 회원 · 상품의 생활관 공개와 별개">
+          <MetricTable rows={data.dormitory_public_distribution?.map(row => ({ ...row, label: row.visibility === "public" ? "공개" : "비공개" }))} rowKey="visibility" columns={[{ key: "label", label: "설정" }, { key: "members", label: "회원 수", numeric: true, unit: "명" }]} />
         </ChartCard>
       </div>
     </>
@@ -169,8 +181,7 @@ function MembersPage({ data, mode }) {
 function SupplyPage({ data, mode }) {
   const c = data.kpis.current;
   const p = data.kpis.previous;
-  const statusLabel = { selling: "판매 중", reserved: "예약", sold: "판매 완료", hidden: "숨김", deleted: "삭제" };
-  const statusRows = data.item_status_snapshot.map((row) => ({ ...row, status: statusLabel[row.status] || row.status }));
+  const statusRows = data.item_status_snapshot.map((row) => ({ ...row, status: displayLabel(ITEM_STATUS_LABELS, row.status) }));
   const status = Object.fromEntries(statusRows.map((r) => [r.status, r.items]));
   const ageKeys = ["0–7일", "8–14일", "15–29일", "30일 이상"];
   const ageByCategory = [...new Set(data.unsold_item_age_by_category.map((r) => r.category_name))].map((name) => ({ category_name: name, ...Object.fromEntries(ageKeys.map((bucket) => [bucket, data.unsold_item_age_by_category.find((r) => r.category_name === name && r.bucket === bucket)?.items || 0])) }));
@@ -178,23 +189,23 @@ function SupplyPage({ data, mode }) {
     <>
       <EmptyNotice mode={mode} />
       <div className="kpi-grid five">
-        <KpiCard label="신규 등록" current={c.new_items} previous={p.new_items} unit="건" note="최근 7일 등록 완료" />
-        <KpiCard label="등록 사용자" current={c.unique_sellers} previous={p.unique_sellers} unit="명" note="최근 7일 고유 판매자" />
-        <KpiCard label="1인당 평균 등록" current={c.average_items_per_seller} previous={p.average_items_per_seller} unit="개" note="최근 7일" />
-        <KpiCard label="판매 완료" current={c.completed_sales} previous={p.completed_sales} unit="건" note="최근 7일" />
+        <KpiCard label="신규 등록" current={c.new_items} previous={p.new_items} unit="건" note="선택 기간 등록 완료" />
+        <KpiCard label="등록 사용자" current={c.unique_sellers} previous={p.unique_sellers} unit="명" note="선택 기간 고유 판매자" />
+        <KpiCard label="1인당 평균 등록" current={c.average_items_per_seller} previous={p.average_items_per_seller} unit="개" note="선택 기간" />
+        <KpiCard label="판매 완료" current={c.completed_sales} previous={p.completed_sales} unit="건" note="선택 기간" />
         <KpiCard label="판매 평균 소요" current={c.average_days_to_sell} previous={p.average_days_to_sell} unit="일" inverse note="등록 후 판매까지" />
       </div>
       <div className="chart-grid">
-        <ChartCard title="신규 등록·등록자 추이" subtitle="최근 7개 완료주 · 주차별 누적" insight="신규 판매자 증가와 다량 등록을 구분">
+        <ChartCard title="신규 등록·등록자 추이" subtitle="최근 7개 완료주 · 주차별 등록" insight="신규 판매자 증가와 다량 등록을 구분">
           <TrendLines data={data.new_items_and_sellers_weekly} xKey="week_start" lines={[{ key: "new_items", name: "상품", suffix: "건", color: chartColors.orange }, { key: "unique_sellers", name: "판매자", suffix: "명", color: chartColors.slate }]} />
         </ChartCard>
         <ChartCard title="상품 상태 구성" subtitle="현재 시점 판매 중·예약·완료·숨김" insight="어느 거래 상태에 상품이 쌓이는지 확인">
           <StackedBars data={[{ name: "전체", ...status }]} xKey="name" horizontal keys={statusRows.map((r, i) => ({ key: r.status, name: r.status, color: [chartColors.orange, "#f8d48e", chartColors.slate, "#dfe5ee"][i] }))} />
         </ChartCard>
-        <ChartCard title="카테고리별 상품 수" subtitle="현재 판매 중 · 6개 앱 카테고리" insight="카테고리별 공급 부족과 과잉을 비교">
+        <ChartCard title="카테고리별 상품 수" subtitle="현재 판매 중 · DB 카테고리명 기준" insight="카테고리별 공급 부족과 과잉을 비교">
           <HorizontalBars data={data.selling_items_by_category} yKey="category_name" valueKey="items" suffix="건" />
         </ChartCard>
-        <ChartCard title="사용자별 등록 수 분포" subtitle="최근 7일 등록자 · 사용자 기준" insight="소수 판매자 의존과 이상 등록 여부를 확인">
+        <ChartCard title="사용자별 등록 수 분포" subtitle="선택 기간 등록자 · 사용자 기준" insight="소수 판매자 의존과 이상 등록 여부를 확인">
           <VerticalBars data={data.items_per_seller_distribution} xKey="bucket" valueKey="sellers" suffix="명" accentLast={false} />
         </ChartCard>
         <ChartCard title="미판매 상품 경과일" subtitle="현재 판매 중 상품 · 등록 후 경과 기간" insight="30일 이상 노후 상품의 가격·노출 점검 필요">
@@ -203,7 +214,14 @@ function SupplyPage({ data, mode }) {
         <ChartCard title="카테고리별 노후 상품" subtitle="미판매 상품 · 등록 경과일 구성" insight="노후 상품 비중이 높은 카테고리를 우선 개선">
           <StackedBars data={ageByCategory} xKey="category_name" horizontal keys={ageKeys.map((key, i) => ({ key, name: key, color: [chartColors.orange, "#f8d48e", chartColors.slate, "#b3bfd0"][i] }))} />
         </ChartCard>
-        <ChartCard title="판매 소요시간 분포" subtitle="최근 7일 판매 완료 · 등록부터 소요시간" insight="평균선 오른쪽의 장기 판매 상품을 함께 확인" className="wide">
+        <ChartCard title="상품에 공개된 생활관" subtitle="현재 남은 상품 · 숨김 포함 · 판매자 프로필과 별개">
+          <MetricTable rows={data.item_dormitory_distribution?.map(row => ({ ...row, label: dormitoryLabel(row.dormitory_code, true) }))} rowKey="dormitory_code" columns={[{ key: "label", label: "공개 생활관" }, { key: "items", label: "상품 수", numeric: true, unit: "건" }]} />
+        </ChartCard>
+        <ChartCard title="상품 누적 조회수" subtitle="현재 남은 상품 · 숨김 포함 · 순 방문자 수 및 선택 기간 조회수 아님">
+          <p className="snapshot-total">누적 열람 <strong>{format(data.view_count_snapshot?.total_views, "회")}</strong><span>조회수 보유 {format(data.view_count_snapshot?.items_with_counts, "건")} / 상품 {format(data.view_count_snapshot?.items, "건")}</span></p>
+          <MetricTable rows={data.views_by_category} rowKey="category_name" columns={[{ key: "category_name", label: "카테고리" }, { key: "items", label: "상품", numeric: true, unit: "건" }, { key: "views", label: "누적 열람", numeric: true, unit: "회" }]} />
+        </ChartCard>
+        <ChartCard title="판매 소요시간 분포" subtitle="선택 기간 판매 완료 · 등록부터 소요시간" insight="평균선 오른쪽의 장기 판매 상품을 함께 확인" className="wide">
           <VerticalBars data={data.sale_duration_distribution} xKey="bucket" valueKey="items" suffix="건" accentLast={false} height={290} />
         </ChartCard>
       </div>
@@ -214,11 +232,10 @@ function SupplyPage({ data, mode }) {
 function EngagementPage({ data, operations, mode }) {
   const c = data.kpis.current;
   const p = data.kpis.previous;
-  const reservationStatusLabel = { requested: "요청", confirmed: "확정", completed: "완료", cancelled: "취소", no_show: "노쇼" };
-  const reservationData = data.reservation_status_weekly.map((row) => ({ ...row, status: reservationStatusLabel[row.status] || row.status }));
+  const reservationData = data.reservation_status_weekly.map((row) => ({ ...row, status: displayLabel(TRADE_STATUS_LABELS, row.status) }));
   const weeks = [...new Set(reservationData.map((r) => r.week_start))];
   const statuses = [...new Set(reservationData.map((r) => r.status))];
-  const reservationRows = weeks.map((week) => ({ week_start: week, ...Object.fromEntries(statuses.map((status) => [status, reservationData.find((r) => r.week_start === week && r.status === status)?.trades || 0])) }));
+  const reservationRows = weeks.map((week) => ({ week_start: week, ...Object.fromEntries(statuses.map((status) => [status, reservationData.filter((r) => r.week_start === week && r.status === status).reduce((sum, row) => sum + Number(row.trades || 0), 0)])) }));
   const weekdays = ["월", "화", "수", "목", "금", "토", "일"];
   const timeLabel = { "00_05": "새벽", "06_11": "오전", "12_17": "오후", "18_23": "저녁" };
   return (
@@ -228,7 +245,7 @@ function EngagementPage({ data, operations, mode }) {
         <KpiCard label="찜 사용자" current={c.favorite_users} previous={p.favorite_users} unit="명" note="고유 찜 사용자" />
         <KpiCard label="활성 채팅방" current={c.active_chat_rooms} previous={p.active_chat_rooms} unit="개" note="메시지 발생 방" />
         <KpiCard label="예약 생성" current={c.reservations} previous={p.reservations} unit="건" note="거래 예약" />
-        <KpiCard label="완료 거래" current={c.completed_trades} previous={p.completed_trades} unit="건" note="최근 7일" />
+        <KpiCard label="완료 거래" current={c.completed_trades} previous={p.completed_trades} unit="건" note="선택 기간" />
         <KpiCard label="후기 작성률" current={c.review_rate} previous={p.review_rate} unit="%" percentagePoint note="완료 거래 후 7일" />
       </div>
       <div className="chart-grid">
@@ -238,35 +255,44 @@ function EngagementPage({ data, operations, mode }) {
         <ChartCard title="채팅방·메시지 추이" subtitle="최근 7개 완료주 · 주별 고유 방·메시지" insight="새 문의와 기존 대화 활성도를 구분">
           <TrendLines data={data.weekly_trends} xKey="week_start" lines={[{ key: "active_chat_rooms", name: "채팅방", suffix: "개", color: chartColors.orange }, { key: "messages", name: "메시지", suffix: "건", color: chartColors.slate }]} />
         </ChartCard>
-        <ChartCard title="카테고리별 완료 거래" subtitle="최근 7일 완료 거래 · 카테고리 기준" insight="실제 거래가 강한 분야를 확인">
+        <ChartCard title="카테고리별 완료 거래" subtitle="선택 기간 완료 거래 · 카테고리 기준" insight="실제 거래가 강한 분야를 확인">
           <HorizontalBars data={data.completed_trades_by_category} yKey="category_name" valueKey="trades" suffix="건" />
         </ChartCard>
-        <ChartCard title="카테고리별 찜" subtitle="최근 7일 생성 · 고유 찜" insight="수요는 높지만 거래가 막힌 카테고리를 발견">
+        <ChartCard title="카테고리별 찜" subtitle="선택 기간 생성 · 고유 찜" insight="수요는 높지만 거래가 막힌 카테고리를 발견">
           <HorizontalBars data={data.favorites_by_category} yKey="category_name" valueKey="favorites" suffix="건" />
         </ChartCard>
-        <ChartCard title="주차별 예약 상태" subtitle="최근 5주 완료 · 상태별 비중" insight="요청·확정·완료·취소 흐름으로 거래 품질 판단">
-          <StackedBars data={reservationRows} xKey="week_start" horizontal keys={statuses.map((key, i) => ({ key, name: key, color: [chartColors.orange, chartColors.slate, "#8fb69a", "#e96f67"][i] }))} />
+        <ChartCard title="주차별 예약 상태" subtitle="최근 5개 완료주 생성 예약 · 현재 상태별 건수" insight="요청·확정·완료·취소 흐름으로 거래 품질 판단">
+          <StackedBars data={reservationRows} xKey="week_start" horizontal keys={statuses.map((key, i) => ({ key, name: key, color: [chartColors.orange, chartColors.slate, "#8fb69a", "#e96f67", "#b6a6cc", "#72afbe", "#c9a87c"][i % 7] }))} />
         </ChartCard>
         <ChartCard title="총 완료 거래 추이" subtitle="최근 7개 완료주 · 완료 거래" insight="최종 거래 성과가 꾸준히 성장하는지 확인">
           <TrendLines data={data.weekly_trends} xKey="week_start" lines={[{ key: "completed_trades", name: "완료 거래", suffix: "건", color: chartColors.orange }]} />
         </ChartCard>
-        <ChartCard title="거래 장소 분포" subtitle="최근 7일 완료 거래 · 약속 장소" insight="거래가 집중되는 장소의 안전성과 안내 수요 확인">
+        <ChartCard title="거래 장소 분포" subtitle="선택 기간 완료 거래 · 약속 장소" insight="거래가 집중되는 장소의 안전성과 안내 수요 확인">
           <HorizontalBars data={data.trade_place_distribution} yKey="meeting_place" valueKey="trades" suffix="건" />
         </ChartCard>
-        <ChartCard title="거래 시간대" subtitle="최근 7일 완료 거래 · 예정 시각" insight="거래가 몰리는 시간대에 운영 안내를 집중">
+        <ChartCard title="거래 시간대" subtitle="선택 기간 완료 거래 · 예정 시각" insight="거래가 몰리는 시간대에 운영 안내를 집중">
           <VerticalBars data={data.trade_time_of_day_distribution.map((row) => ({ ...row, time_bucket: timeLabel[row.time_bucket] || row.time_bucket }))} xKey="time_bucket" valueKey="trades" suffix="건" accentLast={false} />
         </ChartCard>
-        <ChartCard title="시간별 거래 완료" subtitle="시간 단위 · 완료 거래" insight="오후 3–5시에 거래가 가장 활발">
+        <ChartCard title="시간별 거래 완료" subtitle="완료 거래의 예정 시각 · 시간별 건수" insight="오후 3–5시에 거래가 가장 활발">
           <TrendLines data={data.trade_hour_distribution.map((r) => ({ ...r, label: `${r.hour}시` }))} xKey="label" lines={[{ key: "trades", name: "완료 거래", suffix: "건", color: chartColors.orange }]} />
         </ChartCard>
-        <ChartCard title="요일별 거래 완료" subtitle="월–일 · 완료 거래" insight="금요일 거래 집중 여부를 주차별로 확인">
+        <ChartCard title="요일별 거래 완료" subtitle="완료 거래의 예정 날짜 · 요일별 건수" insight="금요일 거래 집중 여부를 주차별로 확인">
           <VerticalBars data={data.trade_weekday_distribution.map((r) => ({ ...r, day: weekdays[Number(r.iso_weekday) - 1] }))} xKey="day" valueKey="trades" suffix="건" />
+        </ChartCard>
+        <ChartCard title="알림 유형별 생성·읽음" subtitle="선택 기간 생성된 알림 · 현재 읽음 상태" className="wide">
+          <MetricTable rows={operations.notification_read_performance?.map(row => ({ ...row, label: displayLabel(NOTIFICATION_LABELS, row.notification_type) }))} rowKey="notification_type" columns={[{ key: "label", label: "알림 유형" }, { key: "notifications", label: "생성", numeric: true, unit: "건" }, { key: "read_rate", label: "읽음률", numeric: true, unit: "%" }]} />
+        </ChartCard>
+        <ChartCard title="신고 상태별 접수 건수" subtitle="선택 기간 접수된 신고 · 현재 처리 상태">
+          <MetricTable rows={operations.report_status_distribution?.map(row => ({ ...row, label: displayLabel(REPORT_STATUS_LABELS, row.report_status) }))} rowKey="report_status" columns={[{ key: "label", label: "상태" }, { key: "reports", label: "신고", numeric: true, unit: "건" }]} />
+        </ChartCard>
+        <ChartCard title="신고 대상별 접수 건수" subtitle="선택 기간 접수 · 상품·채팅·사용자·후기">
+          <MetricTable rows={operations.report_type_distribution?.map(row => ({ ...row, label: displayLabel(REPORT_TYPE_LABELS, row.report_type) }))} rowKey="report_type" columns={[{ key: "label", label: "대상" }, { key: "reports", label: "신고", numeric: true, unit: "건" }]} />
         </ChartCard>
         <section className="operations-card wide">
           <div className="section-title"><div><h3>운영 점검</h3><p>예약 이행·신고·알림 성과를 같은 기간으로 확인</p></div><span>관리자 전용</span></div>
           <div className="ops-grid">
             <div><span>예약 이행률</span><strong>{format(operations.reservation_fulfillment?.fulfillment_rate, "%")}</strong><small>{format(operations.reservation_fulfillment?.completed_trades, "건")} 완료</small></div>
-            <div><span>취소·노쇼율</span><strong>{format(operations.reservation_fulfillment?.cancel_or_no_show_rate, "%")}</strong><small>{format(operations.reservation_fulfillment?.cancelled_or_verified_no_show_trades, "건")}</small></div>
+            <div><span>예약 취소율</span><strong>{format(operations.reservation_fulfillment?.cancel_or_no_show_rate, "%")}</strong><small>{format(operations.reservation_fulfillment?.cancelled_or_verified_no_show_trades, "건")}</small></div>
             <div><span>신고 적체</span><strong>{format(operations.reports?.current_backlog, "건")}</strong><small>기간 접수 {format(operations.reports?.received_in_period, "건")}</small></div>
             <div><span>신고 처리 중앙값</span><strong>{format(operations.reports?.resolution_sla?.median_hours, "시간")}</strong><small>P90 {format(operations.reports?.resolution_sla?.p90_hours, "시간")}</small></div>
           </div>
@@ -276,14 +302,11 @@ function EngagementPage({ data, operations, mode }) {
   );
 }
 
-const FUNNEL_LABELS = {
-  login_required: "로그인 필요", start_sign_up: "가입 시작", school_verification_completed: "학교 인증", sign_up: "가입 완료",
-  start_item_registration: "등록 시작", add_item_image: "이미지 추가", select_item_category: "카테고리 선택", preview_item: "미리보기", create_item: "등록 완료",
-  view_item: "상품 조회", chat_started: "채팅 시작", trade_created: "거래 예약", trade_completed: "거래 완료",
-};
+const FUNNEL_LABELS = EVENT_LABELS;
 
 function FunnelBlock({ title, subtitle, funnel, insight, duration, previous, month }) {
   const stages = funnel.stages || [];
+  if (!stages.length) return <section className="funnel-card"><header><h3>{title}</h3><p>{subtitle}</p></header><div className="chart-empty">{funnel.status === "not_implemented" ? "이 퍼널의 단계별 집계는 아직 연결되지 않았습니다." : "계산 가능한 행동 이벤트 기록 없음"}</div></section>;
   const getCount = (row) => row.actors ?? row.attempts ?? 0;
   const maxDrop = stages.slice(1).reduce((best, row, i) => {
     const prev = getCount(stages[i]);
@@ -301,7 +324,7 @@ function FunnelBlock({ title, subtitle, funnel, insight, duration, previous, mon
             const drop = next ? Math.round(100 - (getCount(next) / Math.max(1, getCount(row))) * 100) : 0;
             return (
               <div className="funnel-row" key={row.stage}>
-                <div className="funnel-step" style={{ width: `${width}%` }}><b>{FUNNEL_LABELS[row.stage] || row.stage}</b><span>{format(getCount(row), "명")} · {format(row.rate_from_start, "%")}</span></div>
+                <div className="funnel-step" style={{ width: `${width}%` }}><b>{FUNNEL_LABELS[row.stage] || row.stage}</b><span>{format(getCount(row), row.attempts != null ? "회" : "명")} · {format(row.rate_from_start, "%")}</span></div>
                 {index < stages.length - 1 && <small>이탈 {Math.max(0, drop)}%</small>}
               </div>
             );
@@ -318,7 +341,7 @@ function FunnelBlock({ title, subtitle, funnel, insight, duration, previous, mon
 }
 
 function FunnelsPage({ data, mode }) {
-  const rates = [data.guest_to_member, data.item_registration, data.trade_completion].map((f) => f.stages?.at(-1)?.rate_from_start || 0);
+  const rates = [data.guest_to_member, data.item_registration, data.trade_completion].map((f) => f.stages?.at(-1)?.rate_from_start ?? null);
   return (
     <>
       <EmptyNotice mode={mode} />
@@ -328,21 +351,16 @@ function FunnelsPage({ data, mode }) {
         <KpiCard label="거래 완료 전환율" value={format(rates[2], "%")} current={rates[2]} previous={2.8} percentagePoint changeText={mode === "live" ? "비교값 없음" : undefined} note="7일 관찰" />
       </div>
       <div className="funnel-list">
-        <FunnelBlock title="회원 전환 퍼널" subtitle="로그인 요구 후 30일 · 동일 guest_id 및 user_id" funnel={data.guest_to_member} duration={mode === "live" ? "집계 예정" : "2.8일"} previous={mode === "live" ? "비교값 없음" : "+2.4%p"} month={mode === "live" ? "비교값 없음" : "+6.7%p"} insight="로그인 필요 화면에서 가입 시작으로 넘어가는 흐름을 우선 확인" />
-        <FunnelBlock title="상품 등록 퍼널" subtitle="등록 시작 후 24시간 · 등록 시도 세션 기준" funnel={data.item_registration} duration={mode === "live" ? "집계 예정" : "8분 42초"} previous={mode === "live" ? "비교값 없음" : "+5.1%p"} month={mode === "live" ? "비교값 없음" : "+8.4%p"} insight="미리보기 이후 등록 완료 직전의 마찰을 집중 점검" />
-        <FunnelBlock title="거래 완료 퍼널" subtitle="상품 조회 후 7일 · 구매자와 상품의 거래 시도 기준" funnel={data.trade_completion} duration={mode === "live" ? "집계 예정" : "3.6일"} previous={mode === "live" ? "비교값 없음" : "+0.6%p"} month={mode === "live" ? "비교값 없음" : "+1.2%p"} insight="상품 조회에서 채팅 시작으로 이어지지 않는 원인을 먼저 분석" />
+        <ChartCard title="수집된 행동 이벤트" subtitle="선택 기간 발생 건수 · 관리자·탈퇴 계정 제외 · 전환율과 별개">
+          <MetricTable rows={data.event_distribution?.map(row => ({ ...row, label: displayLabel(EVENT_LABELS, row.event_name) }))} rowKey="event_name" emptyText="선택 기간에 수집된 행동 이벤트가 없습니다." columns={[{ key: "label", label: "행동" }, { key: "event_name", label: "이벤트 코드" }, { key: "events", label: "발생", numeric: true, unit: "건" }]} />
+        </ChartCard>
+        <FunnelBlock title="회원 전환 퍼널" subtitle="로그인 요구 후 30일 · 동일 guest_id 및 user_id" funnel={data.guest_to_member} duration={mode === "live" ? "기록 부족" : "2.8일"} previous={mode === "live" ? "비교값 없음" : "+2.4%p"} month={mode === "live" ? "비교값 없음" : "+6.7%p"} insight="로그인 필요 화면에서 가입 시작으로 넘어가는 흐름을 우선 확인" />
+        <FunnelBlock title="상품 등록 퍼널" subtitle="등록 시작 후 24시간 · 등록 시도 세션 기준" funnel={data.item_registration} duration={mode === "live" ? "기록 부족" : "8분 42초"} previous={mode === "live" ? "비교값 없음" : "+5.1%p"} month={mode === "live" ? "비교값 없음" : "+8.4%p"} insight="미리보기 이후 등록 완료 직전의 마찰을 집중 점검" />
+        <FunnelBlock title="거래 완료 퍼널" subtitle="상품 조회 후 7일 · 구매자와 상품의 거래 시도 기준" funnel={data.trade_completion} duration={mode === "live" ? "기록 부족" : "3.6일"} previous={mode === "live" ? "비교값 없음" : "+0.6%p"} month={mode === "live" ? "비교값 없음" : "+1.2%p"} insight="상품 조회에서 채팅 시작으로 이어지지 않는 원인을 먼저 분석" />
       </div>
       <section className="dropout-card"><h3>이탈을 3가지로 구분</h3><div><article><b>단계 이탈</b><p>정해진 기간 안에 다음 이벤트가 없음</p><span>핵심 퍼널 개선</span></article><article><b>화면 이탈</b><p>다른 화면으로 이동</p><span>이탈 후 경로 분석</span></article><article><b>앱 이탈</b><p>앱 종료 또는 일정 시간 무활동</p><span>세션 품질 확인</span></article></div></section>
     </>
   );
-}
-
-function formatPeriod(period) {
-  const start = String(period.start_date || "").split("-");
-  const end = String(period.end_date || "").split("-");
-  if (start.length !== 3 || end.length !== 3) return "기간 선택";
-  const endText = start[0] === end[0] ? `${end[1]}.${end[2]}` : end.join(".");
-  return `${start.join(".")}–${endText}`;
 }
 
 function LoginScreen({ configured, onLogin }) {
@@ -383,16 +401,15 @@ function LoginScreen({ configured, onLogin }) {
 
 export function App() {
   const [tab, setTab] = useState("core");
-  const [payload, setPayload] = useState({ data: demoData, mode: "demo", period: demoPeriod, warning: null });
-  const [range, setRange] = useState({ startDate: demoPeriod.start_date, endDate: demoPeriod.end_date });
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [payload, setPayload] = useState(() => { const dates = recentRange(); return { data: null, mode: "loading", period: { start_date: dates.startDate, end_date: dates.endDate }, warning: null }; });
+  const [range, setRange] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState("–");
   const [authState, setAuthState] = useState("checking");
 
   const refresh = async (nextRange = range) => {
     setLoading(true);
-    const next = await loadDashboard(nextRange.startDate, nextRange.endDate);
+    const next = await loadDashboard(nextRange?.startDate, nextRange?.endDate);
     if (next.unauthorized) {
       setAuthState("unauthenticated");
       setLoading(false);
@@ -434,11 +451,13 @@ export function App() {
 
   const handleLogout = async () => {
     await logoutAdmin();
-    setPayload({ data: demoData, mode: "demo", period: demoPeriod, warning: null });
+    setRange(null);
+    setPayload(current => ({ ...current, data: null, mode: "loading", warning: null }));
     setAuthState("unauthenticated");
   };
 
   const currentPage = useMemo(() => {
+    if (!payload.data) return null;
     const props = { data: payload.data[tab], mode: payload.mode };
     if (tab === "core") return <CorePage {...props} />;
     if (tab === "members") return <MembersPage {...props} />;
@@ -446,12 +465,6 @@ export function App() {
     if (tab === "engagement") return <EngagementPage {...props} operations={payload.data.operations} />;
     return <FunnelsPage {...props} />;
   }, [payload, tab]);
-
-  const applyRange = () => {
-    if (range.startDate > range.endDate) return;
-    setPickerOpen(false);
-    refresh(range);
-  };
 
   if (authState === "checking") return <div className="auth-loading"><span />관리자 세션을 확인하는 중입니다</div>;
   if (authState !== "authenticated") return <LoginScreen configured={authState !== "unconfigured"} onLogin={handleLogin} />;
@@ -461,11 +474,8 @@ export function App() {
       <header className="topbar">
         <div className="brand"><div className="brand-mark">K</div><div><b>KOKET 운영 대시보드</b><span>데이터로 더 안전하고 빠른 교내 거래</span></div></div>
         <div className="header-actions">
-          <span className={`mode-chip ${payload.mode}`} title={payload.warning || "Supabase 실데이터 연결됨"}>{payload.mode === "live" ? "실데이터" : "예시 데이터"}</span>
-          <div className="date-control">
-            <button type="button" aria-expanded={pickerOpen} onClick={() => setPickerOpen((v) => !v)}>최근 7일 · {formatPeriod(payload.period)}</button>
-            {pickerOpen && <div className="date-popover"><label>시작일<input type="date" value={range.startDate} onChange={(e) => setRange((r) => ({ ...r, startDate: e.target.value }))} /></label><label>종료일<input type="date" value={range.endDate} onChange={(e) => setRange((r) => ({ ...r, endDate: e.target.value }))} /></label><button type="button" onClick={applyRange}>적용</button></div>}
-          </div>
+          <span className={`mode-chip ${payload.mode}`} title={payload.warning || "Supabase 실데이터 연결됨"}>{loading ? "조회 중" : payload.mode === "live" ? "실데이터" : "연결 오류"}</span>
+          <DateRangePicker period={payload.period} range={range} loading={loading} onChange={dates => { setRange(dates); refresh(dates); }} />
           <button className="logout-button" type="button" onClick={handleLogout}>로그아웃</button>
         </div>
       </header>
@@ -474,7 +484,10 @@ export function App() {
       </nav>
       <main>
         <PageIntro page={tab} refreshedAt={refreshedAt} />
-        {loading ? <div className="loading-state"><span />데이터를 불러오는 중입니다</div> : currentPage}
+        {loading ? <div className="loading-state"><span />데이터를 불러오는 중입니다</div> : payload.mode === "error" ? <section className="chart-card" role="alert"><h2>실데이터를 불러오지 못했습니다</h2><p>{payload.warning}</p><button className="logout-button" type="button" onClick={() => refresh()}>다시 시도</button></section> : <DataModeContext.Provider value={payload.mode}>
+          {payload.metadata?.notes?.length > 0 && <details className="data-notes"><summary>집계 기준·기록 범위 확인</summary><ul>{payload.metadata.notes.map(note => <li key={note}>{note}</li>)}</ul></details>}
+          {currentPage}
+        </DataModeContext.Provider>}
       </main>
       <footer>표시 시각과 날짜 기준: Asia/Seoul · 관리자용 내부 화면</footer>
     </div>

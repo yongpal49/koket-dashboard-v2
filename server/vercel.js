@@ -1,3 +1,4 @@
+import { loadDashboardData } from "./dashboard-source.js";
 import {
   clearSessionCookie,
   createSessionCookie,
@@ -6,14 +7,6 @@ import {
   verifySession,
 } from "../worker/auth.js";
 
-const RPC = {
-  core: "get_dashboard_core",
-  members: "get_dashboard_members",
-  supply: "get_dashboard_supply",
-  engagement: "get_dashboard_engagement",
-  funnels: "get_dashboard_funnels",
-  operations: "get_dashboard_operations",
-};
 
 const sendJson = (response, status, body, headers = {}) => {
   response.statusCode = status;
@@ -82,28 +75,8 @@ export async function handleDashboard(request, response) {
 
   try {
     const body = await readJsonBody(request);
-    const sections = Array.isArray(body.sections)
-      ? body.sections.filter((name) => RPC[name])
-      : Object.keys(RPC);
-    const isLegacyKey = !supabaseKey.startsWith("sb_secret_");
-
-    const entries = await Promise.all(sections.map(async (section) => {
-      const rpcResponse = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/${RPC[section]}`, {
-        method: "POST",
-        headers: {
-          apikey: supabaseKey,
-          ...(isLegacyKey ? { authorization: `Bearer ${supabaseKey}` } : {}),
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ p_start_date: body.startDate, p_end_date: body.endDate }),
-      });
-
-      if (!rpcResponse.ok) throw new Error(`${section}: ${rpcResponse.status} ${await rpcResponse.text()}`);
-      return [section, await rpcResponse.json()];
-    }));
-
-    return sendJson(response, 200, { data: Object.fromEntries(entries) });
+    return sendJson(response, 200, await loadDashboardData(process.env, body));
   } catch (error) {
-    return sendJson(response, 502, { error: error.message });
+    return sendJson(response, error.status || 502, { error: error.message });
   }
 }

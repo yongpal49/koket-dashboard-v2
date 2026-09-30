@@ -1,0 +1,24 @@
+// Run while scripts/verify-preview.mjs is serving its synthetic loopback dataset.
+import assert from 'node:assert/strict';
+const base = 'http://127.0.0.1:5178';
+const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const body = JSON.stringify({ startDate: date, endDate: date });
+const post = (path, value, cookie = '') => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: value });
+assert.equal((await post('/api/dashboard', body)).status, 401);
+const login = await post('/api/auth', JSON.stringify({ password: 'fixture-only-password' }));
+assert.equal(login.status, 200);
+const cookie = login.headers.get('set-cookie').split(';')[0];
+const response = await post('/api/dashboard', body, cookie);
+assert.equal(response.status, 200);
+const { data, metadata } = await response.json();
+assert.equal(data.members.kpis.current.total_members, 2);
+assert.equal(data.members.account_status_distribution.find(row => row.status === 'withdrawal_pending').members, 1);
+assert.equal(data.supply.view_count_snapshot.total_views, 20);
+assert.deepEqual(data.supply.item_dormitory_distribution, [{ dormitory_code: '', items: 1 }, { dormitory_code: '101', items: 1 }]);
+assert.equal(data.operations.notification_read_performance.length, 14);
+assert.equal(data.operations.report_type_distribution.length, 4);
+assert.deepEqual(data.funnels.event_distribution, [{ event_name: 'new_behavior', events: 1 }]);
+assert.equal(metadata.source, 'tables');
+assert.equal((await post('/api/logout', '{}', cookie)).status, 200);
+assert.equal((await post('/api/dashboard', body)).status, 401);
+console.log('PASS isolated HTTP flow: login → API → table reads → new aggregates → logout');

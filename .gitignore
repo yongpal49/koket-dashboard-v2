@@ -1,5 +1,9 @@
 node_modules/
 dist/
+.npm-cache/
+.local-audit/
+.vercel/
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.zip

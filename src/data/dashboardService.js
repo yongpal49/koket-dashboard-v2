@@ -1,11 +1,11 @@
-import { demoData, demoPeriod } from "./demoData.js";
+import { recentRange } from "../utils/dateRange.js";
 
 const sections = ["core", "members", "supply", "engagement", "funnels", "operations"];
 
-export async function loadDashboard(startDate, endDate) {
+async function requestDashboard(startDate, endDate) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
-
+  const timer = setTimeout(() => controller.abort(), 35000);
+  const period = { start_date: startDate, end_date: endDate, timezone: "Asia/Seoul" };
   try {
     const response = await fetch("/api/dashboard", {
       method: "POST",
@@ -13,19 +13,26 @@ export async function loadDashboard(startDate, endDate) {
       body: JSON.stringify({ sections, startDate, endDate }),
       signal: controller.signal,
     });
-
     if (response.status === 401) return { unauthorized: true };
-    if (!response.ok) throw new Error(`dashboard api ${response.status}`);
     const payload = await response.json();
-    return { data: payload.data, mode: "live", period: { start_date: startDate, end_date: endDate, timezone: "Asia/Seoul" }, warning: null };
-  } catch {
-    return {
-      data: demoData,
-      mode: "demo",
-      period: { start_date: startDate || demoPeriod.start_date, end_date: endDate || demoPeriod.end_date, timezone: "Asia/Seoul" },
-      warning: "현재 Supabase 연결 정보가 없어 예시 데이터로 표시 중입니다. 환경 변수를 설정하면 실데이터로 자동 전환됩니다.",
-    };
+    if (!response.ok) throw new Error(payload.error || "서버가 데이터를 반환하지 못했습니다.");
+    if (!sections.every(section => payload.data?.[section] && typeof payload.data[section] === "object")) {
+      throw new Error("대시보드 응답 형식이 일치하지 않습니다.");
+    }
+    return { data: payload.data, metadata: payload.metadata, mode: "live", period, warning: null };
+  } catch (error) {
+    return { data: null, mode: "error", period, warning: error.name === "AbortError" ? "조회 시간이 초과됐습니다. 다시 시도해주세요." : error.message };
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function loadDashboard(startDate, endDate) {
+  if (startDate) return requestDashboard(startDate, endDate);
+  const recent = recentRange();
+  const initial = await requestDashboard(recent.startDate, recent.endDate);
+  if (initial.mode !== "live") return initial;
+  const firstDate = initial.metadata?.available_data_range?.start_date;
+  if (!firstDate || firstDate === recent.startDate) return initial;
+  return requestDashboard(firstDate, recent.endDate);
 }

@@ -14,3 +14,14 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Keep `DASHBOARD_PASSWORD`, `DASHBOARD_SESSION_SECRET`, and Supabase secrets server-side only.
 - Protect `/api/dashboard` with the signed administrator session; the login screen alone is not sufficient protection.
 - Preserve the existing dashboard UI after login and provide an explicit logout action.
+
+## Current data and local development contract
+
+- The production URL is https://koket-dashboard-v2.vercel.app/.
+- For frontend collaboration, use `collaboration.env.example` as the local proxy configuration. Never commit real environment files.
+- `server/dashboard-source.js` selects `tables`, `core-rpc`, or the legacy RPC mode. `core-rpc` replaces only the core section with `get_dashboard_core`; all new operational aggregates come from `server/table-dashboard.js`.
+- New label mappings live in `shared/dashboard-labels.js`. Preserve unknown raw labels rather than dropping rows.
+- Keep administrator/withdrawn-account exclusions and distinguish pending withdrawal from completed withdrawal. Product dormitory must not be inferred from a private seller profile.
+- View counts are lifetime totals on current nondeleted items, not selected-period visits or unique visitors.
+- A migration file in this repository is not evidence of remote application. Do not change production SQL, data, RLS, or keys merely to sync code.
+- Validate a handoff with `npm run build` and `node --test tests/*.test.mjs`; use `node scripts/verify-sql.mjs` only in the isolated PGlite setup described in README.

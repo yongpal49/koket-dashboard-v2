@@ -1,15 +1,9 @@
+import { loadDashboardData } from "./server/dashboard-source.js";
+import { createDashboardProxy } from "./server/dev-proxy.js";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { clearSessionCookie, createSessionCookie, getAuthConfig, verifyPassword, verifySession } from "./worker/auth.js";
 
-const RPC = {
-  core: "get_dashboard_core",
-  members: "get_dashboard_members",
-  supply: "get_dashboard_supply",
-  engagement: "get_dashboard_engagement",
-  funnels: "get_dashboard_funnels",
-  operations: "get_dashboard_operations",
-};
 
 function dashboardApi(env) {
   const supabaseKey = env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY;
@@ -18,6 +12,7 @@ function dashboardApi(env) {
   const sendJson = (res, body, status = 200, headers = {}) => {
     res.statusCode = status;
     res.setHeader("content-type", "application/json; charset=utf-8");
+    res.setHeader("cache-control", "no-store");
     for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
     res.end(JSON.stringify(body));
   };
@@ -71,40 +66,28 @@ function dashboardApi(env) {
 
         try {
             const body = await readBody(req);
-            const sections = Array.isArray(body.sections) ? body.sections.filter((name) => RPC[name]) : Object.keys(RPC);
-            const entries = await Promise.all(sections.map(async (section) => {
-              const isLegacyKey = !supabaseKey.startsWith("sb_secret_");
-              const response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${RPC[section]}`, {
-                method: "POST",
-                headers: {
-                  apikey: supabaseKey,
-                  ...(isLegacyKey ? { authorization: `Bearer ${supabaseKey}` } : {}),
-                  "content-type": "application/json",
-                },
-                body: JSON.stringify({ p_start_date: body.startDate, p_end_date: body.endDate }),
-              });
-              if (!response.ok) throw new Error(`${section}: ${response.status} ${await response.text()}`);
-              return [section, await response.json()];
-            }));
-            return sendJson(res, { data: Object.fromEntries(entries) });
+            return sendJson(res, await loadDashboardData(env, body));
           } catch (error) {
-            return sendJson(res, { error: error.message }, 502);
+            return sendJson(res, { error: error.message }, error.status || 502);
           }
       });
     },
   };
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command, isPreview }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const proxy = command === "serve" && !isPreview && env.DASHBOARD_API_PROXY?.trim()
+    ? createDashboardProxy(env.DASHBOARD_API_PROXY.trim()) : undefined;
   return {
     build: { outDir: "dist/client" },
     optimizeDeps: { include: ["react", "react-dom/client", "recharts"] },
     server: {
-      host: "0.0.0.0",
-      allowedHosts: ["terminal.local"],
+      host: proxy ? "127.0.0.1" : "0.0.0.0",
+      allowedHosts: proxy ? [] : ["terminal.local"],
+      proxy,
       warmup: { clientFiles: ["./src/main.jsx"] },
     },
-    plugins: [react(), dashboardApi(env)],
+    plugins: [react(), ...(proxy ? [] : [dashboardApi(env)])],
   };
 });
