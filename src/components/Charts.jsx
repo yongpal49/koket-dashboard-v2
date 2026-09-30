@@ -18,7 +18,7 @@ import {
 
 export const DataModeContext = createContext("demo");
 const EmptyChart = () => <div className="chart-empty">해당 기간 기록 없음</div>;
-const hasValues = (data, keys) => data.some(row => keys.some(key => isMetric(row[key])));
+const hasValues = (data, keys) => Array.isArray(data) && data.some(row => keys.some(key => isMetric(row[key])));
 
 const ORANGE = "#ffb84d";
 const ORANGE_DARK = "#f4a11c";
@@ -106,6 +106,51 @@ export function HorizontalBars({ data, yKey, valueKey, suffix = "", highlightFir
         </Bar>
       </BarChart>
     </ResponsiveContainer>
+  );
+}
+
+export function AdaptiveDistribution({ data, labelKey, valueKey, unit = "", summaryLabel = "현재 집계", height = 260 }) {
+  if (!Array.isArray(data)) return <div className="chart-empty">새 집계 항목은 서버 업데이트 후 표시됩니다.</div>;
+  if (!data.length) return <EmptyChart />;
+  if (data.length > 1) return <HorizontalBars data={data} yKey={labelKey} valueKey={valueKey} suffix={unit} height={height} />;
+  const row = data[0];
+  return (
+    <div className="single-metric-summary" role="group" aria-label={`${row[labelKey]} ${formatMetric(row[valueKey], unit)}`}>
+      <span>{summaryLabel}</span>
+      <strong>{formatMetric(row[valueKey], unit)}</strong>
+      <b>{row[labelKey]}</b>
+    </div>
+  );
+}
+
+export function ReadRateBars({ data, labelKey = "label", totalKey = "notifications", rateKey = "read_rate" }) {
+  if (!Array.isArray(data)) return <div className="chart-empty">새 집계 항목은 서버 업데이트 후 표시됩니다.</div>;
+  if (!data.length) return <EmptyChart />;
+  const rows = data.map((row) => {
+    const total = Math.max(0, Number(row[totalKey]) || 0);
+    const rate = Math.max(0, Math.min(100, Number(row[rateKey]) || 0));
+    const read = Math.min(total, Math.round(total * rate / 100));
+    return { ...row, total, rate, read, unread: total - read };
+  });
+  const maxTotal = Math.max(1, ...rows.map(row => row.total));
+  return (
+    <div className="read-rate-chart">
+      <div className="read-rate-legend" aria-hidden="true"><span><i className="read" />읽음</span><span><i className="unread" />미읽음</span></div>
+      <div className="read-rate-list" role="list" aria-label="알림 유형별 생성 및 읽음 현황">
+        {rows.map((row) => (
+          <div className="read-rate-row" role="listitem" key={row.notification_type ?? row[labelKey]}>
+            <span className="read-rate-label" title={row[labelKey]}>{row[labelKey]}</span>
+            <div className="read-rate-track" aria-label={`${row[labelKey]} 생성 ${formatMetric(row.total, "건")}, 읽음 ${formatMetric(row.read, "건")}, 미읽음 ${formatMetric(row.unread, "건")}`}>
+              <div className="read-rate-total" style={{ width: `${Math.max(4, row.total / maxTotal * 100)}%` }}>
+                <i className="read" style={{ width: `${row.rate}%` }} />
+                <i className="unread" style={{ width: `${100 - row.rate}%` }} />
+              </div>
+            </div>
+            <b>{formatMetric(row.total, "건")}<small>{formatMetric(row.rate, "%")}</small></b>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -1,80 +1,70 @@
-# KOKET Dashboard Design QA
+# KOKET Operational Charts Design QA
 
 ## Comparison target
 
-- Source visual truth: [Figma · KOKET 운영 대시보드 · 완성본](https://www.figma.com/design/Lhe6mnYDwr1MbCjeGYm27r/%EB%8C%80%EC%8B%9C%EB%B3%B4%EB%93%9C-%EA%B5%AC%EC%84%B1?node-id=195-10)
-- Source nodes: `195:11` 핵심 현황, `195:182` 회원·활성·리텐션, `195:494` 상품·공급, `195:811` 찜·거래·채팅·후기, `195:1108` 퍼널
-- Implementation screenshots:
-  - `qa/core-browser-final.jpg`
-  - `qa/members-browser-final.jpg`
-  - `qa/supply-browser-final.jpg`
-  - `qa/engagement-browser-final.jpg`
-  - `qa/funnels-browser-final.jpg`
-- Browser viewport: 1363 × 936 CSS px, device scale factor 1
-- Source natural sizes: core 1440 × 1396, members 1440 × 2325, supply 1440 × 2336, engagement 1440 × 1866, funnels 1440 × 1900
-- Implementation capture sizes: core 1348 × 1472, members 1348 × 2882, supply 1348 × 2412, engagement 1348 × 3152, funnel viewport 1363 × 936
-- Density normalization: source and implementation both judged at 1× CSS density; source frames were proportionally fit to the implementation width for visual comparison.
-- State: desktop, light theme, example-data fallback, default date range 2026-07-28–2026-08-03.
+- Source visual truth:
+  - `C:\Users\Future\AppData\Local\Temp\codex-clipboard-b3158d48-fa2c-4f47-b3ef-2c6478cbf7c7.png`
+  - `C:\Users\Future\AppData\Local\Temp\codex-clipboard-91129ebf-2f60-4f59-8516-def823f31166.png`
+  - `C:\Users\Future\AppData\Local\Temp\codex-clipboard-cb35768b-3acb-491a-b942-f50014ae21e1.png`
+- Browser-rendered implementation screenshots:
+  - `C:\Users\Future\.codex\visualizations\2026\09\28\01a0e5f5-d54c-7180-b701-9ddc3c70cef7\members-desktop.png`
+  - `C:\Users\Future\.codex\visualizations\2026\09\28\01a0e5f5-d54c-7180-b701-9ddc3c70cef7\supply-desktop.png`
+  - `C:\Users\Future\.codex\visualizations\2026\09\28\01a0e5f5-d54c-7180-b701-9ddc3c70cef7\notifications-desktop.png`
+- Implementation URL: `http://127.0.0.1:5178/`
+- Desktop viewport: 1265 × 712 CSS px, device scale factor 1.
+- Mobile viewport tested interactively: 390 × 844 CSS px, device scale factor 1.
+- Source pixels: members 906 × 879, supply 910 × 794, engagement 1374 × 930.
+- Implementation screenshot pixels: 1265 × 712 for each focused desktop capture.
+- Density normalization: all captures were inspected at 1×. Crops differ because the sources are isolated card groups while the implementation captures include adjacent dashboard cards; the requested cards themselves were compared at readable scale.
+- State: light theme, authenticated administrator view, isolated synthetic table data. Source and fixture counts differ, so QA compares hierarchy, labels, encodings, spacing, and responsive behavior rather than equal values.
 
 ## Findings
 
-- No actionable P0, P1, or P2 mismatch remains.
-- Fonts and typography: Noto Sans KR-first stack, weights, hierarchy, line height, and compact Korean labels match the source. No clipped KPI or chart-end labels were found.
-- Spacing and layout rhythm: 72px top bar, 56px navigation, 40px page gutters, five-column KPI grid, two-column chart grid, 12px card radii, and section spacing match the source proportions.
-- Colors and visual tokens: orange, blue-gray, light-gray background, green positive state, and red negative state are consistently mapped to shared CSS tokens.
-- Image and asset fidelity: the source contains no photo or illustration assets. The K mark is reproduced as the same typographic brand tile; charts use the application chart renderer rather than raster placeholders.
-- Copy and content: Figma labels are preserved where they match the live schema. Product categories use the current app's six labels: 교재, 전자기기, 생활, 의류, 스포츠, 기타.
-- Responsive behavior: no horizontal overflow at the tested desktop viewport. Tablet and mobile grids collapse without hiding controls.
-- Accessibility and interaction: navigation is button-based with an active state, the date control exposes `aria-expanded`, date inputs have labels, and reduced-motion preferences are respected.
+- No actionable P0, P1, or P2 differences remain.
+- Fonts and typography: the existing Korean font stack, 18px card headings, 12px supporting copy, tabular numeric values, and bold end labels remain consistent with the dashboard. Long notification labels stay readable on desktop and mobile.
+- Spacing and layout rhythm: the new charts use the existing two-column grid, card padding, pale plot surface, 12px radius, and orange/slate rhythm. Dense notification rows preserve scanning space without stretching the page excessively.
+- Colors and visual tokens: orange identifies the primary or read portion, slate identifies secondary categories, and pale slate identifies unread/background capacity. The public/private donut uses the same dashboard chart palette.
+- Image quality and asset fidelity: the target contains no photographic, illustration, logo, or icon assets. Recharts vectors and CSS layout remain sharp at both tested viewport sizes.
+- Copy and content: source-backed dormitory, notification, report-status, report-type, and category labels remain visible. Unknown future labels flow through the existing fallback mapping instead of being dropped.
+- Accessibility and interaction: chart values remain present as text; notification rows expose generated/read/unread counts through accessible labels; the single-category summary has a grouped accessible name; no keyboard controls were removed.
+- Responsive behavior: at 390px, notification labels, bars, totals, and percentages fit without horizontal clipping. Snapshot totals stack above category bars on narrow screens.
 
 ## Full-view comparison evidence
 
-- Core: header, tab bar, title, reading-order notice, five KPI cards, two-by-two chart grid, value labels, and interpretation strips align with the Figma hierarchy.
-- Members: the Figma layout is preserved through the retention and dormant sections; platform and app-version cards are appended as requested without changing the earlier hierarchy.
-- Supply: KPI and chart order match Figma. The status panel uses the available live RPC snapshot rather than inventing unavailable historical rows.
-- Engagement: the first six chart cards match Figma; trade-place, time-of-day, hourly, weekday, and operations cards are appended from the implemented RPC fields.
-- Funnels: the visible header, three KPI cards, funnel geometry, stage labels, drop-off labels, and reading panel match the Figma frame.
+- Members: the table-only dormitory cards become a horizontal distribution and a profile-publicity donut while keeping the same titles, subtitles, card proportions, and data labels.
+- Supply: product dormitory rows become an adaptive count visualization; lifetime views keep the total KPI and add category bars containing both item count and view count.
+- Engagement: notification rows become proportional read/unread bars with generated count and read rate on each row; report status and target counts use summary or horizontal-bar forms depending on category count.
 
 ## Focused region comparison evidence
 
-- KPI region: numeric typography, delta badges, notes, and five-column sizing were inspected at readable scale.
-- Chart labels: every vertical/horizontal bar has an end label and every line has a final-point value label.
-- Funnel region: widths narrow consistently, drop-off values sit outside the funnel, and the right-side interpretation card keeps source alignment.
-- No additional image-focused crop was needed because the design has no raster content and the full-resolution Figma captures kept all UI text legible.
+- Source and implementation pairs were opened together in one image-comparison pass for all three requested areas.
+- Member bars and donut labels were checked at full readable size.
+- Supply total, category labels, item counts, and bar-end view counts were checked at full readable size.
+- All fourteen synthetic notification types were checked together; the desktop and 390px mobile states showed no overlapping labels or clipped totals.
 
 ## Comparison history
 
-1. Earlier P2: the connection explanation occupied a full row and shifted the KPI grid below the Figma position.
-   - Fix: removed the extra row and kept data-source status in the existing `예시 데이터` / `실데이터` chip.
-   - Post-fix evidence: `qa/core-browser-final.jpg` aligns the KPI row directly below the reading-order notice.
-2. Earlier P2: chart animations could be captured midway, making lines and bars appear incomplete.
-   - Fix: disabled chart animation for deterministic administrator reporting and screenshots.
-   - Post-fix evidence: final browser captures show complete lines, bars, and labels.
-3. Earlier P2: the member activity card showed DAU only even though Figma contains DAU/WAU/MAU controls and the RPC exposes all three series.
-   - Fix: added a working DAU/WAU/MAU segmented control.
-   - Post-fix evidence: browser interaction changed the card to `WAU 기준 · 기간별 고유 사용자` and rendered seven WAU points.
+1. Initial comparison found no product P0/P1/P2 mismatch. Two captures contained a transient Recharts hover tooltip.
+   - Fix: moved focus to a neutral page area and recaptured the member and supply regions.
+   - Post-fix evidence: the final screenshot paths above show clean chart surfaces with no tooltip overlay.
 
 ## Primary interactions tested
 
-- Switched among all five dashboard tabs.
-- Opened and closed the date-range popover and applied the selected range.
-- Switched the active-member chart from DAU to WAU.
-- Confirmed example-data fallback after the server returned the expected no-environment configuration response.
-- Checked browser console logs: no warnings or errors from `terminal.local`.
-
-## Follow-up polish
-
-- P3: the Figma file shows a historical weekly product-status composition, while the current RPC exposes a current status snapshot. Adding a weekly status series to the RPC would allow an exact historical version of that panel without fabricated values.
-- P3: the displayed refresh timestamp intentionally uses current Asia/Seoul time instead of the static timestamp in the mock.
+- Logged into the isolated preview with its fixture-only administrator password.
+- Switched among the member, supply, and engagement tabs.
+- Scrolled through all requested chart groups at desktop width.
+- Rechecked the notification chart at 390 × 844.
+- Checked browser console warnings and errors: none.
 
 ## Implementation checklist
 
-- [x] Five Figma dashboard tabs implemented
-- [x] Platform/app-version and trade place/time visualizations added
-- [x] Supabase service-role key kept server-side
-- [x] Loading, live, example-data, and empty numeric states supported
-- [x] Production build passed
-- [x] Sites worker tests passed (4/4)
-- [x] Browser interaction and console checks passed
+- [x] Dormitory selection rendered as horizontal bars
+- [x] Profile dormitory visibility rendered as a donut
+- [x] One-category product/report snapshots rendered as numeric summaries
+- [x] Lifetime views rendered as total KPI plus category bars
+- [x] Notification read performance rendered as proportional read/unread bars
+- [x] Report targets rendered as horizontal bars
+- [x] Dynamic unknown labels preserved
+- [x] Desktop and mobile browser QA completed
 
 final result: passed

@@ -1,10 +1,12 @@
 import { formatMetric as format, metricChange as delta, normalizeRetentionWeeks, metricShare } from "./utils/metrics.js";
 import { useEffect, useMemo, useState } from "react";
 import {
+  AdaptiveDistribution,
   ChartCard,
   DataModeContext,
   Donut,
   HorizontalBars,
+  ReadRateBars,
   RetentionHeatmap,
   StackedBars,
   TrendLines,
@@ -123,6 +125,12 @@ function MembersPage({ data, mode }) {
   }));
   const activitySeries = activityMetric === "dau" ? data.dau_trend : activityMetric === "wau" ? data.wau_trend : data.mau_trend;
   const activityXKey = activityMetric === "dau" ? "date" : activityMetric === "wau" ? "week_start" : "month_start";
+  const dormitories = (data.dormitory_distribution || []).map(row => ({ ...row, label: dormitoryLabel(row.dormitory_code) }));
+  const dormPublic = (data.dormitory_public_distribution || [])
+    .map(row => ({ ...row, label: row.visibility === "public" ? "공개" : "비공개" }))
+    .sort((a, b) => (a.visibility === "public") - (b.visibility === "public"));
+  const dormPublicTotal = dormPublic.reduce((sum, row) => sum + Number(row.members || 0), 0);
+  const dormPublicMembers = dormPublic.find(row => row.visibility === "public")?.members || 0;
   return (
     <>
       <EmptyNotice mode={mode} />
@@ -168,10 +176,10 @@ function MembersPage({ data, mode }) {
           <HorizontalBars data={data.app_version_distribution.map((r) => ({ ...r, label: `${({ android: "Android", ios: "iOS", web: "Web", pwa: "PWA" })[r.platform] || r.platform} ${r.app_version}` }))} yKey="label" valueKey="actors" suffix="명" />
         </ChartCard>
         <ChartCard title="생활관 선택 분포" subtitle="현재 미탈퇴 회원 · 본인 선택값 · 거주 인증 아님">
-          <MetricTable rows={data.dormitory_distribution?.map(row => ({ ...row, label: dormitoryLabel(row.dormitory_code) }))} rowKey="dormitory_code" columns={[{ key: "label", label: "생활관" }, { key: "members", label: "회원 수", numeric: true, unit: "명" }]} />
+          <HorizontalBars data={dormitories} yKey="label" valueKey="members" suffix="명" height={Math.max(260, dormitories.length * 34 + 36)} />
         </ChartCard>
         <ChartCard title="프로필 생활관 공개 설정" subtitle="현재 미탈퇴 회원 · 상품의 생활관 공개와 별개">
-          <MetricTable rows={data.dormitory_public_distribution?.map(row => ({ ...row, label: row.visibility === "public" ? "공개" : "비공개" }))} rowKey="visibility" columns={[{ key: "label", label: "설정" }, { key: "members", label: "회원 수", numeric: true, unit: "명" }]} />
+          <Donut data={dormPublic} nameKey="label" valueKey="members" centerValue={format(metricShare(dormPublicMembers, dormPublicTotal), "%")} centerLabel="공개 비율" />
         </ChartCard>
       </div>
     </>
@@ -185,6 +193,8 @@ function SupplyPage({ data, mode }) {
   const status = Object.fromEntries(statusRows.map((r) => [r.status, r.items]));
   const ageKeys = ["0–7일", "8–14일", "15–29일", "30일 이상"];
   const ageByCategory = [...new Set(data.unsold_item_age_by_category.map((r) => r.category_name))].map((name) => ({ category_name: name, ...Object.fromEntries(ageKeys.map((bucket) => [bucket, data.unsold_item_age_by_category.find((r) => r.category_name === name && r.bucket === bucket)?.items || 0])) }));
+  const itemDormitories = (data.item_dormitory_distribution || []).map(row => ({ ...row, label: dormitoryLabel(row.dormitory_code, true) }));
+  const categoryViews = (data.views_by_category || []).map(row => ({ ...row, chart_label: `${row.category_name} · 상품 ${format(row.items, "건")}` }));
   return (
     <>
       <EmptyNotice mode={mode} />
@@ -215,11 +225,13 @@ function SupplyPage({ data, mode }) {
           <StackedBars data={ageByCategory} xKey="category_name" horizontal keys={ageKeys.map((key, i) => ({ key, name: key, color: [chartColors.orange, "#f8d48e", chartColors.slate, "#b3bfd0"][i] }))} />
         </ChartCard>
         <ChartCard title="상품에 공개된 생활관" subtitle="현재 남은 상품 · 숨김 포함 · 판매자 프로필과 별개">
-          <MetricTable rows={data.item_dormitory_distribution?.map(row => ({ ...row, label: dormitoryLabel(row.dormitory_code, true) }))} rowKey="dormitory_code" columns={[{ key: "label", label: "공개 생활관" }, { key: "items", label: "상품 수", numeric: true, unit: "건" }]} />
+          <AdaptiveDistribution data={itemDormitories} labelKey="label" valueKey="items" unit="건" summaryLabel="현재 상품" height={Math.max(240, itemDormitories.length * 38 + 36)} />
         </ChartCard>
         <ChartCard title="상품 누적 조회수" subtitle="현재 남은 상품 · 숨김 포함 · 순 방문자 수 및 선택 기간 조회수 아님">
-          <p className="snapshot-total">누적 열람 <strong>{format(data.view_count_snapshot?.total_views, "회")}</strong><span>조회수 보유 {format(data.view_count_snapshot?.items_with_counts, "건")} / 상품 {format(data.view_count_snapshot?.items, "건")}</span></p>
-          <MetricTable rows={data.views_by_category} rowKey="category_name" columns={[{ key: "category_name", label: "카테고리" }, { key: "items", label: "상품", numeric: true, unit: "건" }, { key: "views", label: "누적 열람", numeric: true, unit: "회" }]} />
+          <div className="snapshot-chart-layout">
+            <div className="snapshot-chart-total"><span>누적 열람</span><strong>{format(data.view_count_snapshot?.total_views, "회")}</strong><small>조회수 보유 {format(data.view_count_snapshot?.items_with_counts, "건")} / 상품 {format(data.view_count_snapshot?.items, "건")}</small></div>
+            <HorizontalBars data={categoryViews} yKey="chart_label" valueKey="views" suffix="회" height={Math.max(220, categoryViews.length * 44 + 44)} highlightFirst={false} />
+          </div>
         </ChartCard>
         <ChartCard title="판매 소요시간 분포" subtitle="선택 기간 판매 완료 · 등록부터 소요시간" insight="평균선 오른쪽의 장기 판매 상품을 함께 확인" className="wide">
           <VerticalBars data={data.sale_duration_distribution} xKey="bucket" valueKey="items" suffix="건" accentLast={false} height={290} />
@@ -238,6 +250,9 @@ function EngagementPage({ data, operations, mode }) {
   const reservationRows = weeks.map((week) => ({ week_start: week, ...Object.fromEntries(statuses.map((status) => [status, reservationData.filter((r) => r.week_start === week && r.status === status).reduce((sum, row) => sum + Number(row.trades || 0), 0)])) }));
   const weekdays = ["월", "화", "수", "목", "금", "토", "일"];
   const timeLabel = { "00_05": "새벽", "06_11": "오전", "12_17": "오후", "18_23": "저녁" };
+  const notificationRows = (operations.notification_read_performance || []).map(row => ({ ...row, label: displayLabel(NOTIFICATION_LABELS, row.notification_type) }));
+  const reportStatusRows = (operations.report_status_distribution || []).map(row => ({ ...row, label: displayLabel(REPORT_STATUS_LABELS, row.report_status) }));
+  const reportTypeRows = (operations.report_type_distribution || []).map(row => ({ ...row, label: displayLabel(REPORT_TYPE_LABELS, row.report_type) }));
   return (
     <>
       <EmptyNotice mode={mode} />
@@ -280,13 +295,13 @@ function EngagementPage({ data, operations, mode }) {
           <VerticalBars data={data.trade_weekday_distribution.map((r) => ({ ...r, day: weekdays[Number(r.iso_weekday) - 1] }))} xKey="day" valueKey="trades" suffix="건" />
         </ChartCard>
         <ChartCard title="알림 유형별 생성·읽음" subtitle="선택 기간 생성된 알림 · 현재 읽음 상태" className="wide">
-          <MetricTable rows={operations.notification_read_performance?.map(row => ({ ...row, label: displayLabel(NOTIFICATION_LABELS, row.notification_type) }))} rowKey="notification_type" columns={[{ key: "label", label: "알림 유형" }, { key: "notifications", label: "생성", numeric: true, unit: "건" }, { key: "read_rate", label: "읽음률", numeric: true, unit: "%" }]} />
+          <ReadRateBars data={notificationRows} />
         </ChartCard>
         <ChartCard title="신고 상태별 접수 건수" subtitle="선택 기간 접수된 신고 · 현재 처리 상태">
-          <MetricTable rows={operations.report_status_distribution?.map(row => ({ ...row, label: displayLabel(REPORT_STATUS_LABELS, row.report_status) }))} rowKey="report_status" columns={[{ key: "label", label: "상태" }, { key: "reports", label: "신고", numeric: true, unit: "건" }]} />
+          <AdaptiveDistribution data={reportStatusRows} labelKey="label" valueKey="reports" unit="건" summaryLabel="선택 기간 접수" />
         </ChartCard>
         <ChartCard title="신고 대상별 접수 건수" subtitle="선택 기간 접수 · 상품·채팅·사용자·후기">
-          <MetricTable rows={operations.report_type_distribution?.map(row => ({ ...row, label: displayLabel(REPORT_TYPE_LABELS, row.report_type) }))} rowKey="report_type" columns={[{ key: "label", label: "대상" }, { key: "reports", label: "신고", numeric: true, unit: "건" }]} />
+          <HorizontalBars data={reportTypeRows} yKey="label" valueKey="reports" suffix="건" height={Math.max(240, reportTypeRows.length * 48 + 48)} />
         </ChartCard>
         <section className="operations-card wide">
           <div className="section-title"><div><h3>운영 점검</h3><p>예약 이행·신고·알림 성과를 같은 기간으로 확인</p></div><span>관리자 전용</span></div>
