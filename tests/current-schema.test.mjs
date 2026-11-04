@@ -76,5 +76,5 @@ test('all fourteen notification types, new event labels and report types retain 
   assert.equal(data.operations.reports.current_backlog, 2);
   assert.equal(data.operations.report_type_distribution.length, 4);
   assert.deepEqual(data.funnels.event_distribution, [{ event_name: 'future_event', events: 1 }]);
-  assert.equal(data.funnels.trade_completion.status, 'not_implemented');
+  assert.equal(data.funnels.trade_completion.status, 'no_cohorts');
 });

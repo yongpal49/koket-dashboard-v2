@@ -4,7 +4,8 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'vite';
 import { NOTIFICATION_LABELS } from '../shared/dashboard-labels.js';
 
-const at = new Date().toISOString();
+const at = new Date(Date.now() - 60000).toISOString();
+const stepAt = seconds => new Date(Date.parse(at) + seconds * 1000).toISOString();
 const tables = {
   users: [
     { user_id: 'member', role: 'member', joined_at: at, account_status: 'active', dormitory_code: '202', dormitory_public: false, department_code: 'computer_engineering' },
@@ -20,7 +21,18 @@ const tables = {
   notifications: Object.keys(NOTIFICATION_LABELS).map((notification_type, i) => ({ notification_id: `notification-${i}`, notification_type, created_at: at, read_at: i % 2 ? null : at })),
   reports: ['item', 'chat', 'user', 'review'].map((report_type, i) => ({ report_id: `report-${i}`, report_type, report_status: ['received', 'reviewing', 'resolved', 'closed'][i], created_at: at })),
   analytics_events: [{ event_id: 'event', event_name: 'new_behavior', user_id: 'member', anonymous_id: 'fixture-device', user_role: 'member', occurred_at: at, platform: 'web', app_version: 'test' }],
+  trades: [
+    { trade_id: 'reviewed', buyer_id: 'member', seller_id: 'pending', item_id: 'one', trade_status: 'completed', created_at: at, completed_at: stepAt(20) },
+    { trade_id: 'completed', buyer_id: 'member', seller_id: 'pending', item_id: 'two', trade_status: 'completed', created_at: at, completed_at: stepAt(20) },
+    { trade_id: 'reserved', buyer_id: 'member', seller_id: 'pending', item_id: 'one', trade_status: 'reserved', created_at: at },
+    { trade_id: 'cancelled', buyer_id: 'member', seller_id: 'pending', item_id: 'two', trade_status: 'cancelled', created_at: at },
+  ],
+  trade_status_history: ['reviewed', 'completed', 'reserved'].map(trade_id => ({ trade_status_history_id: `history-${trade_id}`, trade_id, to_status: 'reserved', created_at: stepAt(10) })),
+  reviews: [{ review_id: 'review', trade_id: 'reviewed', created_at: stepAt(30) }],
 };
+if (process.argv.includes('--with-funnel-events')) {
+  tables.analytics_events.push(...['start_item_registration', 'preview_item', 'create_item'].map((event_name, i) => ({ event_id: `listing-${i}`, event_name, user_id: 'member', anonymous_id: 'fixture-device', session_id: 'fixture-session', user_role: 'member', occurred_at: stepAt(i * 10), properties: {}, platform: 'web', app_version: 'test' })));
+}
 const database = createHttpServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   const table = url.pathname.split('/').at(-1);

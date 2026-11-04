@@ -1,4 +1,6 @@
 import { LABEL_CONTRACT_VERSION } from '../shared/dashboard-labels.js';
+import { buildFunnels } from './funnel-analytics.js';
+import { buildBusinessFunnel } from './business-funnel.js';
 
 const DAY = 86400000;
 const KST = 9 * 3600000;
@@ -28,7 +30,7 @@ const TABLES = {
   item_categories: 'item_category_id,item_id,category_id,is_primary',
   reports: 'report_id,report_type,report_status,created_at,resolved_at',
   notifications: 'notification_id,notification_type,read_at,created_at',
-  analytics_events: 'event_id,event_name,user_id,anonymous_id,user_role,occurred_at,platform,app_version',
+  analytics_events: 'event_id,event_name,user_id,anonymous_id,session_id,user_role,occurred_at,platform,app_version,properties',
 };
 
 function dateMs(value) {
@@ -205,7 +207,7 @@ export async function loadTableDashboard(env, body, options = {}) {
     members: { kpis: kpis(memberKpi), dau_trend: days.map(period => ({ date: label(period[0]), value: active(period) || (covered(period) ? 0 : null) })), wau_trend: weeks.map(period => ({ week_start: label(period[0]), value: active(period) || (covered(period) ? 0 : null) })), mau_trend: [], department_distribution: groups(users.filter(row => stamp(row.joined_at) < end).map(row => ({ department_code: departmentLabel(row.department_code) })), 'department_code', 'members'), account_status_distribution: accountStatuses, cumulative_members_weekly: weeks.map(period => ({ week_start: label(period[0]), members: registeredUsers.filter(row => stamp(row.joined_at) < period[1]).length })), withdrawals_weekly: [], retention_cohorts: [], activity_status_distribution: [], dormant_period_distribution: [], reactivation: { dormant_members_at_start: null, reactivated_members: null, reactivation_rate: null }, platform_distribution: actorDistribution(['platform']), app_version_distribution: actorDistribution(['platform', 'app_version']) },
     supply: { kpis: kpis(supplyKpi), new_items_and_sellers_weekly: weeks.map(period => ({ week_start: label(period[0]), new_items: created(items, period).length, unique_sellers: unique(created(items, period), 'seller_id') })), item_status_snapshot: groups(snapshot.map(row => ({ status: row.visibility_status === 'hidden' ? 'hidden' : row.sale_status })), 'status', 'items'), selling_items_by_category: byCategory(unsold, 'items'), items_per_seller_distribution: groups(sellerCounts.map(row => ({ bucket: row.items >= 6 ? '6개 이상' : `${row.items}개` })), 'bucket', 'sellers'), unsold_item_age_distribution: groups(unsoldAges, 'bucket', 'items'), unsold_item_age_by_category: groups(unsoldAges, row => JSON.stringify([primaryCategories.get(row.item_id) || '미분류', row.bucket]), 'items').map(row => ({ category_name: JSON.parse(row.key)[0], bucket: JSON.parse(row.key)[1], items: row.items })), sale_duration_distribution: groups(saleDays(current).map(days => ({ bucket: ageBucket(days) })), 'bucket', 'items') },
     engagement: { kpis: kpis(engagementKpi), weekly_trends: weeks.map(period => ({ week_start: label(period[0]), ...engagementKpi(period), favorite_items: unique(created(favorites, period), 'item_id'), messages: created(messages, period).length })), completed_trades_by_category: byCategory(done, 'trades'), favorites_by_category: byCategory(created(favorites, current), 'favorites'), reservation_status_weekly: weeks.slice(-5).flatMap(period => groups(created(trades, period), 'trade_status', 'trades').map(({ trade_status, ...row }) => ({ week_start: label(period[0]), status: trade_status, ...row }))), trade_place_distribution: groups(done.map(row => ({ meeting_place: ['학생회관', '공학관', '도서관', '복지관', '기숙사', '인문사회관', '컨버전스홀'].find(place => String(row.meeting_place || '').includes(place)) || '기타' })), 'meeting_place', 'trades'), trade_time_of_day_distribution: groups(schedule.map(row => ({ time_bucket: row.hour < 6 ? '00_05' : row.hour < 12 ? '06_11' : row.hour < 18 ? '12_17' : '18_23' })), 'time_bucket', 'trades'), trade_hour_distribution: groups(schedule, 'hour', 'trades').sort((a, b) => a.hour - b.hour), trade_weekday_distribution: groups(schedule, 'iso_weekday', 'trades') },
-    funnels: { guest_to_member: { observation_window_days: 30, stages: [] }, item_registration: { observation_window_hours: 24, stages: [] }, trade_completion: { observation_window_days: 7, stages: [] } },
+    funnels: buildFunnels(events, trades, { period: current, now }),
     operations: { reservation_fulfillment: { reserved_trades: reserved.length, completed_trades: fulfilled, fulfillment_rate: rate(fulfilled, reserved.length), cancelled_or_verified_no_show_trades: cancelled, cancel_or_no_show_rate: rate(cancelled, reserved.length) }, reports: { received_in_period: received.length, current_backlog: tables.reports.filter(row => ['received', 'reviewing'].includes(row.report_status)).length, resolution_sla: { resolved_reports: resolutions.length, median_hours: quantile(0.5), p90_hours: quantile(0.9) } }, notification_read_performance: groups(notificationRows, 'notification_type', 'notifications').map(row => ({ ...row, read_rate: rate(notificationRows.filter(n => n.notification_type === row.notification_type && n.read_at).length, row.notifications) })) },
   };
   // Current snapshots: date filters cannot reconstruct earlier profile settings
@@ -232,14 +234,14 @@ export async function loadTableDashboard(env, body, options = {}) {
     ...row, read_notifications: notificationRows.filter(n => n.notification_type === row.notification_type && n.read_at).length,
   }));
   data.funnels.event_distribution = groups(currentEvents, 'event_name', 'events');
-  for (const key of ['guest_to_member', 'item_registration', 'trade_completion']) data.funnels[key].status = 'not_implemented';
+  data.funnels.operational_trade = buildBusinessFunnel(trades, tables.trade_status_history, tables.reviews, { period: current, now });
   const sourceCounts = Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.length]));
-  const sourceTimes = Object.values(tables).flatMap(rows => rows.flatMap(row => [row.joined_at, row.created_at, row.completed_at].map(stamp).filter(value => Number.isFinite(value) && value <= now)));
+  const sourceTimes = Object.values(tables).flatMap(rows => rows.flatMap(row => [row.joined_at, row.created_at, row.completed_at, row.occurred_at].map(stamp).filter(value => Number.isFinite(value) && value <= now)));
   const availableRange = sourceTimes.length ? { start_date: label(sourceTimes.reduce((a, b) => Math.min(a, b), Infinity)), end_date: label(sourceTimes.reduce((a, b) => Math.max(a, b), -Infinity)) } : { start_date: null, end_date: null };
   return { data, metadata: { source_counts: sourceCounts, schema: { users: { account_status: userSchema.accountStatus, withdrawn_at: userSchema.withdrawnAt } }, available_data_range: availableRange, source: 'tables', timezone: 'Asia/Seoul', period: { start_date: label(start), end_date: label(last) }, previous_period: { start_date: label(previous[0]), end_date: label(previous[1] - DAY) }, snapshot_at: new Date(now).toISOString(), analytics_observed_range: { first_event_at: eventMin === null ? null : new Date(eventMin).toISOString(), last_event_at: eventMax === null ? null : new Date(eventMax).toISOString() }, notes: [
     `라벨 계약 ${LABEL_CONTRACT_VERSION}. 현재 DB에서 확인한 생활관·조회수·계정 상태·알림 유형을 반영했습니다.`,
     '조회 기간의 회원·상품·거래·찜·채팅·신고·알림 기록을 집계했습니다. 관리자·탈퇴 계정과 연결된 이용 기록은 회원·거래 활동 집계에서 제외합니다.',
-    '방문·전환·리텐션·휴면은 충분한 이용 기록이 없어 미집계입니다. 기록이 없는 지표는 0과 구분합니다.',
+    '퍼널은 선택 기간에 시작한 이용 기록을 기준으로 후속 단계를 관찰 기간까지 연결합니다. 모든 중간 단계가 있어야 완료로 집계하며, 관찰 기간이 끝나지 않은 코호트의 전환율은 잠정값입니다. 수집 이전 기록은 복원하지 않습니다.',
     '활성 회원은 수집된 이용 기록 기준입니다. 수집되지 않은 활동은 포함되지 않으며, 기록 범위 밖의 빈 기간은 미집계입니다.',
     '회원 수는 현재 탈퇴 완료되지 않은 계정 기준이며 탈퇴 처리 중·이용 정지 계정도 포함합니다. 신규 회원·누적 가입 추이는 탈퇴 계정의 가입 이력도 포함합니다. 계정 상태는 현재 기준이며 주별 탈퇴율은 미집계입니다.',
     userSchema.accountStatus ? '계정 상태는 정상·탈퇴 처리 중·탈퇴 등 저장된 값으로 구분합니다. account_status, 탈퇴 처리 학과 코드 또는 withdrawn_at으로 확인된 탈퇴 완료 계정은 제외합니다.' : '계정 상태 컬럼이 없는 기존 DB는 탈퇴 처리 학과 코드와 사용 가능한 탈퇴 시각으로 가입·탈퇴를 구분합니다. 이용 정지 상태는 추정하지 않습니다.',

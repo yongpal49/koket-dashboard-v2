@@ -18,6 +18,9 @@ assert.deepEqual(data.supply.item_dormitory_distribution, [{ dormitory_code: '',
 assert.equal(data.operations.notification_read_performance.length, 14);
 assert.equal(data.operations.report_type_distribution.length, 4);
 assert.deepEqual(data.funnels.event_distribution, [{ event_name: 'new_behavior', events: 1 }]);
+assert.deepEqual(data.funnels.operational_trade.stages.map(row => row.attempts), [4, 3, 2, 1]);
+assert.equal(data.funnels.operational_trade.data_source, 'business_records');
+assert.equal(data.funnels.item_registration.status, 'no_cohorts');
 assert.equal(metadata.source, 'tables');
 assert.equal((await post('/api/logout', '{}', cookie)).status, 200);
 assert.equal((await post('/api/dashboard', body)).status, 401);

@@ -17,6 +17,7 @@ import { loadDashboard } from "./data/dashboardService.js";
 import { DateRangePicker } from "./components/DateRangePicker.jsx";
 import { recentRange } from "./utils/dateRange.js";
 import { checkAdminSession, loginAdmin, logoutAdmin } from "./data/authService.js";
+import { funnelDuration, funnelStatus, stageCount, stageGap } from "./utils/funnels.js";
 import { ACCOUNT_STATUS_LABELS, ITEM_STATUS_LABELS, TRADE_STATUS_LABELS, NOTIFICATION_LABELS, REPORT_STATUS_LABELS, REPORT_TYPE_LABELS, EVENT_LABELS, displayLabel, dormitoryLabel } from "../shared/dashboard-labels.js";
 
 
@@ -321,8 +322,9 @@ const FUNNEL_LABELS = EVENT_LABELS;
 
 function FunnelBlock({ title, subtitle, funnel, insight, duration, previous, month }) {
   const stages = funnel.stages || [];
-  if (!stages.length) return <section className="funnel-card"><header><h3>{title}</h3><p>{subtitle}</p></header><div className="chart-empty">{funnel.status === "not_implemented" ? "이 퍼널의 단계별 집계는 아직 연결되지 않았습니다." : "계산 가능한 행동 이벤트 기록 없음"}</div></section>;
-  const getCount = (row) => row.actors ?? row.attempts ?? 0;
+  if (!stages.length) return <section className="funnel-card"><header><h3>{title}</h3><p>{subtitle}</p></header><div className="chart-empty">{funnelStatus(funnel)}</div></section>;
+  const getCount = stageCount;
+  const stageLabel = (stage) => funnel.stage_definitions?.find(row => row.stage === stage)?.label || FUNNEL_LABELS[stage] || stage;
   const maxDrop = stages.slice(1).reduce((best, row, i) => {
     const prev = getCount(stages[i]);
     const drop = prev ? 100 - (getCount(row) / prev) * 100 : 0;
@@ -330,25 +332,28 @@ function FunnelBlock({ title, subtitle, funnel, insight, duration, previous, mon
   }, { drop: 0, from: "", to: "" });
   return (
     <section className="funnel-card">
-      <header><h3>{title}</h3><p>{subtitle}</p></header>
+      <header><h3>{title}</h3><p>{subtitle}</p><p>{funnelStatus(funnel)}</p></header>
       <div className="funnel-layout">
         <div className="funnel-steps">
           {stages.map((row, index) => {
             const width = 100 - index * (stages.length === 5 ? 8 : 10);
             const next = stages[index + 1];
-            const drop = next ? Math.round(100 - (getCount(next) / Math.max(1, getCount(row))) * 100) : 0;
+            const drop = next ? stageGap(row, next) : null;
             return (
               <div className="funnel-row" key={row.stage}>
-                <div className="funnel-step" style={{ width: `${width}%` }}><b>{FUNNEL_LABELS[row.stage] || row.stage}</b><span>{format(getCount(row), row.attempts != null ? "회" : "명")} · {format(row.rate_from_start, "%")}</span></div>
-                {index < stages.length - 1 && <small>이탈 {Math.max(0, drop)}%</small>}
+                <div className="funnel-step" style={{ width: `${width}%` }}><b>{stageLabel(row.stage)}</b><span>{format(getCount(row), funnel.data_source === "business_records" ? "건" : row.attempts != null ? "회" : "명")} · {format(row.rate_from_start, "%")}</span></div>
+                {index < stages.length - 1 && <small>미도달 {format(drop, "%")}</small>}
               </div>
             );
           })}
         </div>
         <aside className="funnel-aside">
           <b>읽는 법</b>
-          <dl><div><dt>최대 이탈</dt><dd>{FUNNEL_LABELS[maxDrop.from]} → {FUNNEL_LABELS[maxDrop.to]}</dd></div><div><dt>평균 완료</dt><dd>{duration}</dd></div><div><dt>전주 대비</dt><dd>{previous}</dd></div><div><dt>전월 대비</dt><dd>{month}</dd></div></dl>
+          <dl><div><dt>최대 미도달</dt><dd>{maxDrop.from ? `${stageLabel(maxDrop.from)} → ${stageLabel(maxDrop.to)}` : "없음"}</dd></div><div><dt>평균 최종 단계 도달</dt><dd>{funnel.average_completion_seconds !== undefined ? funnelDuration(funnel.average_completion_seconds) : duration}</dd></div><div><dt>전주 대비</dt><dd>{previous}</dd></div><div><dt>전월 대비</dt><dd>{month}</dd></div></dl>
           <p>{insight}</p>
+          {funnel.quality?.completed_without_reservation_evidence > 0 && <p>예약 이력이 확인되지 않은 완료 거래 {funnel.quality.completed_without_reservation_evidence}건은 연속 퍼널의 완료 단계에서 제외했습니다.</p>}
+          {funnel.quality?.excluded_ambiguous_starts > 0 && <p>사용자를 확정할 수 없는 시작 기록 {funnel.quality.excluded_ambiguous_starts}건은 제외했습니다.</p>}
+          {funnel.quality?.excluded_unlinked_starts > 0 && <p>사용자·세션·상품 연결 정보가 부족한 시작 기록 {funnel.quality.excluded_unlinked_starts}건은 제외했습니다.</p>}
         </aside>
       </div>
     </section>
@@ -357,21 +362,33 @@ function FunnelBlock({ title, subtitle, funnel, insight, duration, previous, mon
 
 function FunnelsPage({ data, mode }) {
   const rates = [data.guest_to_member, data.item_registration, data.trade_completion].map((f) => f.stages?.at(-1)?.rate_from_start ?? null);
+  const operational = data.operational_trade;
+  const operationalStages = operational?.stages || [];
+  const observation = (funnel, label) => funnel.rates_are_provisional ? `${label} · 관찰 중 포함, 잠정값` : label;
   return (
     <>
       <EmptyNotice mode={mode} />
+      {operational && <>
+        <div className="kpi-grid three">
+          <KpiCard label="거래 요청" value={format(stageCount(operationalStages[0]), "건")} note="선택 기간에 요청한 거래" changeText="거래 기록 기준" />
+          <KpiCard label="예약 확정 도달률" value={format(operationalStages[1]?.rate_from_start, "%")} note="거래 요청 대비 · 조회 시점까지" changeText="거래 기록 기준" />
+          <KpiCard label="거래 완료 도달률" value={format(operationalStages[2]?.rate_from_start, "%")} note="요청→예약 확정→완료 순서" changeText="거래 기록 기준" />
+        </div>
+        <div className="funnel-list"><FunnelBlock title="거래 진행 퍼널" subtitle="선택 기간에 요청된 거래 · 동일 거래의 확정→완료→후기 기록 연결" funnel={operational} duration="완료 기록 없음" previous="비교값 없음" month="비교값 없음" insight="현재까지 도달한 단계입니다. 진행 중인 거래는 나중에 다음 단계로 이동할 수 있습니다. 최종 단계는 후기 작성이며, 위 완료율 카드는 거래 완료 단계 기준입니다." /></div>
+      </>}
+      {mode === "live" && <div className="live-notice">아래 클릭 퍼널은 앱에서 수집된 행동 이벤트가 필요합니다. 기존 거래 기록으로 과거 클릭·방문을 추정하지 않습니다.</div>}
       <div className="kpi-grid three">
-        <KpiCard label="회원 전환 완료율" value={format(rates[0], "%")} current={rates[0]} previous={52.1} percentagePoint changeText={mode === "live" ? "비교값 없음" : undefined} note="30일 관찰" />
-        <KpiCard label="상품 등록 완료율" value={format(rates[1], "%")} current={rates[1]} previous={57.7} percentagePoint changeText={mode === "live" ? "비교값 없음" : undefined} note="24시간 관찰" />
-        <KpiCard label="거래 완료 전환율" value={format(rates[2], "%")} current={rates[2]} previous={2.8} percentagePoint changeText={mode === "live" ? "비교값 없음" : undefined} note="7일 관찰" />
+        <KpiCard label="회원 전환 완료율" value={format(rates[0], "%")} current={rates[0]} previous={52.1} percentagePoint changeText={mode === "live" ? "비교값 없음" : undefined} note={observation(data.guest_to_member, "30일 관찰")} />
+        <KpiCard label="상품 등록 완료율" value={format(rates[1], "%")} current={rates[1]} previous={57.7} percentagePoint changeText={mode === "live" ? "비교값 없음" : undefined} note={observation(data.item_registration, "24시간 관찰")} />
+        <KpiCard label="조회→거래 완료 전환율" value={format(rates[2], "%")} current={rates[2]} previous={2.8} percentagePoint changeText={mode === "live" ? "비교값 없음" : undefined} note={observation(data.trade_completion, "7일 관찰")} />
       </div>
       <div className="funnel-list">
         <ChartCard title="수집된 행동 이벤트" subtitle="선택 기간 발생 건수 · 관리자·탈퇴 계정 제외 · 전환율과 별개">
           <MetricTable rows={data.event_distribution?.map(row => ({ ...row, label: displayLabel(EVENT_LABELS, row.event_name) }))} rowKey="event_name" emptyText="선택 기간에 수집된 행동 이벤트가 없습니다." columns={[{ key: "label", label: "행동" }, { key: "event_name", label: "이벤트 코드" }, { key: "events", label: "발생", numeric: true, unit: "건" }]} />
         </ChartCard>
-        <FunnelBlock title="회원 전환 퍼널" subtitle="로그인 요구 후 30일 · 동일 guest_id 및 user_id" funnel={data.guest_to_member} duration={mode === "live" ? "기록 부족" : "2.8일"} previous={mode === "live" ? "비교값 없음" : "+2.4%p"} month={mode === "live" ? "비교값 없음" : "+6.7%p"} insight="로그인 필요 화면에서 가입 시작으로 넘어가는 흐름을 우선 확인" />
-        <FunnelBlock title="상품 등록 퍼널" subtitle="등록 시작 후 24시간 · 등록 시도 세션 기준" funnel={data.item_registration} duration={mode === "live" ? "기록 부족" : "8분 42초"} previous={mode === "live" ? "비교값 없음" : "+5.1%p"} month={mode === "live" ? "비교값 없음" : "+8.4%p"} insight="미리보기 이후 등록 완료 직전의 마찰을 집중 점검" />
-        <FunnelBlock title="거래 완료 퍼널" subtitle="상품 조회 후 7일 · 구매자와 상품의 거래 시도 기준" funnel={data.trade_completion} duration={mode === "live" ? "기록 부족" : "3.6일"} previous={mode === "live" ? "비교값 없음" : "+0.6%p"} month={mode === "live" ? "비교값 없음" : "+1.2%p"} insight="상품 조회에서 채팅 시작으로 이어지지 않는 원인을 먼저 분석" />
+        <FunnelBlock title="회원 전환 퍼널" subtitle="로그인 요구 후 30일 · 같은 기기의 가입 흐름" funnel={data.guest_to_member} duration={mode === "live" ? "기록 부족" : "2.8일"} previous={mode === "live" ? "비교값 없음" : "+2.4%p"} month={mode === "live" ? "비교값 없음" : "+6.7%p"} insight="로그인 필요 화면에서 가입 시작으로 넘어가는 흐름을 우선 확인" />
+        <FunnelBlock title="상품 등록 퍼널" subtitle="세션별 첫 등록 시작 후 24시간 · 같은 세션의 폼 복귀는 중복 제외" funnel={data.item_registration} duration={mode === "live" ? "기록 부족" : "8분 42초"} previous={mode === "live" ? "비교값 없음" : "+5.1%p"} month={mode === "live" ? "비교값 없음" : "+8.4%p"} insight="상품 개수 대신 사용자·세션별 등록 흐름을 셉니다. 같은 세션에서 여러 상품을 등록해도 한 흐름입니다." />
+        <FunnelBlock title="조회→거래 완료 퍼널" subtitle="상품 조회 후 7일 · 같은 구매자·상품의 조회→채팅 진입과 실제 거래 기록" funnel={data.trade_completion} duration={mode === "live" ? "기록 부족" : "3.6일"} previous={mode === "live" ? "비교값 없음" : "+0.6%p"} month={mode === "live" ? "비교값 없음" : "+1.2%p"} insight="새 채팅 시작과 기존 채팅방 재진입을 함께 확인합니다." />
       </div>
       <section className="dropout-card"><h3>이탈을 3가지로 구분</h3><div><article><b>단계 이탈</b><p>정해진 기간 안에 다음 이벤트가 없음</p><span>핵심 퍼널 개선</span></article><article><b>화면 이탈</b><p>다른 화면으로 이동</p><span>이탈 후 경로 분석</span></article><article><b>앱 이탈</b><p>앱 종료 또는 일정 시간 무활동</p><span>세션 품질 확인</span></article></div></section>
     </>

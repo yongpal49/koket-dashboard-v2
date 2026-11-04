@@ -70,6 +70,29 @@ test('empty tables preserve null rates and unavailable metrics rather than demo 
   assert.equal(metadata.analytics_observed_range.first_event_at, null);
 });
 
+test('funnels consume event linkage columns and preserve account exclusions across business and event cohorts', async () => {
+  const fixtures = {
+    users: [{ user_id: 'member', role: 'member' }, { user_id: 'admin', role: 'admin' }],
+    analytics_events: ['member', 'admin'].flatMap(user_id => [
+      { event_id: `${user_id}-start`, event_name: 'start_item_registration', user_id, anonymous_id: `${user_id}-device`, session_id: 's', occurred_at: '2026-09-01T00:00:00Z' },
+      { event_id: `${user_id}-preview`, event_name: 'preview_item', user_id, anonymous_id: `${user_id}-device`, session_id: 's', occurred_at: '2026-09-01T01:00:00Z' },
+      { event_id: `${user_id}-done`, event_name: 'create_item', user_id, anonymous_id: `${user_id}-device`, session_id: 's', occurred_at: '2026-09-01T02:00:00Z', properties: { item_id: 'item' } },
+    ]),
+    trades: ['member', 'admin'].map(buyer_id => ({ trade_id: buyer_id, buyer_id, seller_id: 'seller', created_at: '2026-09-01T00:00:00Z', trade_status: 'completed', completed_at: '2026-09-02T00:00:00Z' })),
+    trade_status_history: ['member', 'admin'].map(trade_id => ({ trade_status_history_id: trade_id, trade_id, to_status: 'reserved', created_at: '2026-09-01T01:00:00Z' })),
+    reviews: ['member', 'admin'].map(trade_id => ({ review_id: trade_id, trade_id, created_at: '2026-09-03T00:00:00Z' })),
+  };
+  const { data } = await loadTableDashboard(env, period, { now, fetch: fixtureFetch(fixtures, 100, url => {
+    if (url.pathname.endsWith('/analytics_events')) {
+      const columns = url.searchParams.get('select').split(',');
+      assert.equal(columns.includes('session_id') && columns.includes('properties'), true);
+    }
+  }) });
+  assert.deepEqual(data.funnels.item_registration.stages.map(row => row.attempts), [1, 1, 1]);
+  assert.deepEqual(data.funnels.operational_trade.stages.map(row => row.attempts), [1, 1, 1, 1]);
+  assert.equal(JSON.stringify(data.funnels).includes('member-device'), false);
+});
+
 test('pagination cap fails instead of returning partial aggregates', async () => {
   const users = Array.from({ length: 3 }, (_, i) => ({ user_id: `u${i}`, role: 'member', joined_at: '2026-01-01T00:00:00Z' }));
   await assert.rejects(loadTableDashboard(env, period, { now, maxPages: 2, fetch: fixtureFetch({ users }, 1) }), /pagination limit/);
