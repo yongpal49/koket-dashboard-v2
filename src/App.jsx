@@ -31,7 +31,7 @@ const TABS = [
 
 const PAGE_META = {
   core: ["핵심 현황", "서비스 상태를 30초 안에 파악하는 경영 요약 화면", "핵심 카드 → 추이 → 원인 비교 → 운영 행동"],
-  members: ["회원·활성·리텐션", "사람이 들어오고, 활동하고, 다시 돌아오는지 확인", "회원 카드 → 활동 추이 → 구성 비교 → 리텐션"],
+  members: ["회원·활성·리텐션", "사람이 들어오고, 활동하고, 다시 돌아오는지 확인", "회원 카드 → 가입 추이 → 활동·구성 → 리텐션"],
   supply: ["상품·공급", "거래의 출발점인 매물과 실제 판매까지의 흐름 확인", "공급 카드 → 추이 → 상태 비교 → 판매 속도"],
   engagement: ["찜·거래·채팅·후기", "관심이 대화와 예약, 거래, 신뢰로 이어지는 과정 확인", "관심 카드 → 추이 → 카테고리 → 장소·시간"],
   funnels: ["퍼널", "가입·등록·거래의 단계별 전환과 이탈 원인 확인", "핵심 카드 → 퍼널 → 병목 비교 → 개선 행동"],
@@ -143,6 +143,12 @@ function MembersPage({ data, mode }) {
         <KpiCard label="4주 리텐션" current={c.week_4_retention_rate} previous={p.week_4_retention_rate} unit="%" percentagePoint note="4주 후 재방문" />
       </div>
       <div className="chart-grid">
+        <ChartCard title="날짜별 누적 가입 회원" subtitle={<>단위: 명 · 관리자 제외, 탈퇴 가입 이력 포함 · <span style={{ display: "inline-block" }}>현재 회원 수와 다를 수 있음</span></>}>
+          {Array.isArray(data.members_daily) ? <TrendLines data={data.members_daily} xKey="date" showCountAxis lines={[{ key: "cumulative_members", name: "누적 가입 회원", suffix: "명", color: chartColors.orange }]} /> : <div className="chart-empty">날짜별 가입 추이를 불러올 수 없습니다. 서버 업데이트 후 다시 조회해주세요.</div>}
+        </ChartCard>
+        <ChartCard title="일별 신규 가입 회원" subtitle="선택 기간 · KST 가입일 기준(명) · 오늘은 조회 시점까지 집계">
+          {Array.isArray(data.members_daily) ? <VerticalBars data={data.members_daily} xKey="date" valueKey="new_members" valueName="신규 가입 회원" suffix="명" showCountAxis accentLast /> : <div className="chart-empty">날짜별 가입 추이를 불러올 수 없습니다. 서버 업데이트 후 다시 조회해주세요.</div>}
+        </ChartCard>
         <ChartCard title="활성 사용자 추이" subtitle={`${activityMetric.toUpperCase()} 기준 · 기간별 고유 사용자`} insight="단기 방문과 지속 성장 흐름을 구분">
           <div className="activity-chart">
             <TrendLines data={activitySeries} xKey={activityXKey} height={220} lines={[{ key: "value", name: activityMetric.toUpperCase(), suffix: "명", color: chartColors.orange }]} />
@@ -154,9 +160,6 @@ function MembersPage({ data, mode }) {
         </ChartCard>
         <ChartCard title="회원 상태 구성" subtitle="현재 상태 · 탈퇴 처리 중은 미탈퇴 계정에 포함" insight="회원 기반의 건강도를 상태 비중으로 판단">
           <Donut data={status} nameKey="status" valueKey="members" centerValue={format(metricShare(remainingAccounts, statusTotal), "%")} centerLabel="미탈퇴 계정" />
-        </ChartCard>
-        <ChartCard title="누적 회원 수 추이" subtitle="최근 7개 완료주 · 가입 누적 회원" insight="성장 둔화나 정체 시점을 빠르게 발견">
-          <TrendLines data={data.cumulative_members_weekly} xKey="week_start" lines={[{ key: "members", name: "누적 회원", suffix: "명", color: chartColors.orange }]} />
         </ChartCard>
         <ChartCard title="회원 탈퇴율 추이" subtitle="최근 7개 완료주 · 주간 탈퇴율" insight="정책이나 사용성 문제의 조기 신호를 확인">
           <TrendLines data={data.withdrawals_weekly} xKey="week_start" lines={[{ key: "withdrawal_rate", name: "탈퇴율", suffix: "%", color: chartColors.orange }]} />

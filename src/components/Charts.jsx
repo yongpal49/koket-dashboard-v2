@@ -76,16 +76,16 @@ export function ChartCard({ title, subtitle, insight, children, className = "" }
   );
 }
 
-export function VerticalBars({ data, xKey, valueKey, suffix = "", accentLast = false, height = 260 }) {
+export function VerticalBars({ data, xKey, valueKey, valueName = "값", suffix = "", accentLast = false, height = 260, showCountAxis = false }) {
   if (!hasValues(data, [valueKey])) return <EmptyChart />;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 30, right: 16, left: 0, bottom: 4 }}>
         <CartesianGrid vertical={false} stroke={GRID} />
         <XAxis dataKey={xKey} tickFormatter={formatAxisDate} minTickGap={24} axisLine={false} tickLine={false} tick={{ fill: "#667085", fontSize: 13 }} />
-        <YAxis hide domain={[0, "dataMax + 1"]} />
+        <YAxis hide={!showCountAxis} width={showCountAxis ? 44 : 60} allowDecimals={!showCountAxis} domain={[0, "dataMax + 1"]} axisLine={false} tickLine={false} tickFormatter={compactNumber} tick={{ fill: "#667085", fontSize: 13 }} />
         <Tooltip content={<ChartTooltip suffix={suffix} />} cursor={{ fill: "#fff8ec" }} />
-        <Bar isAnimationActive={false} dataKey={valueKey} name="값" radius={[6, 6, 2, 2]} maxBarSize={46} label={data.length > 12 ? false : (props) => <ValueLabel {...props} suffix={suffix} />}>
+        <Bar isAnimationActive={false} dataKey={valueKey} name={valueName} radius={[6, 6, 2, 2]} maxBarSize={46} label={data.length > 12 ? false : (props) => <ValueLabel {...props} suffix={suffix} />}>
           {data.map((_, i) => <Cell key={i} fill={accentLast && i === data.length - 1 ? ORANGE : SLATE} />)}
         </Bar>
       </BarChart>
@@ -159,14 +159,14 @@ function LastPointLabel({ x, y, value, index, total, suffix = "", color }) {
   return <text x={x + 8} y={y - 8} fill={color} fontSize="13" fontWeight="800">{compactNumber(value)}{suffix}</text>;
 }
 
-export function TrendLines({ data, xKey, lines, height = 260 }) {
+export function TrendLines({ data, xKey, lines, height = 260, showCountAxis = false }) {
   if (!hasValues(data, lines.map(line => line.key))) return <EmptyChart />;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 28, right: 64, left: 8, bottom: 4 }}>
         <CartesianGrid vertical={false} stroke={GRID} />
         <XAxis dataKey={xKey} tickFormatter={formatAxisDate} minTickGap={24} axisLine={false} tickLine={false} tick={{ fill: "#667085", fontSize: 13 }} />
-        <YAxis hide />
+        <YAxis hide={!showCountAxis} width={showCountAxis ? 44 : 60} allowDecimals={!showCountAxis} axisLine={false} tickLine={false} tickFormatter={compactNumber} tick={{ fill: "#667085", fontSize: 13 }} />
         <Tooltip content={<ChartTooltip units={Object.fromEntries(lines.map(line => [line.key, line.suffix || ""]))} />} />
         {lines.map((line, i) => (
           <Line isAnimationActive={false} key={line.key} type="monotone" dataKey={line.key} name={line.name} stroke={line.color || COLORS[i]} strokeWidth={2.5} dot={{ r: 3, fill: "white", strokeWidth: 2 }} activeDot={{ r: 5 }} label={lines.length > 1 ? false : (props) => <LastPointLabel {...props} total={data.length} suffix={line.suffix || ""} color={line.color || COLORS[i]} />} />

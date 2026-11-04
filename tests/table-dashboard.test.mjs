@@ -70,6 +70,91 @@ test('empty tables preserve null rates and unavailable metrics rather than demo 
   assert.equal(metadata.analytics_observed_range.first_event_at, null);
 });
 
+test('daily member signups use KST boundaries, carry the baseline, and fill days without signups', async () => {
+  const users = [
+    { user_id: 'baseline', role: 'member', joined_at: '2026-08-31T14:59:59.999Z' },
+    { user_id: 'start', role: 'member', joined_at: '2026-08-31T15:00:00Z' },
+    { user_id: 'first-day-end', role: 'member', joined_at: '2026-09-01T14:59:59.999Z' },
+    { user_id: 'second-day-start', role: 'member', joined_at: '2026-09-01T15:00:00Z' },
+    { user_id: 'range-end', role: 'member', joined_at: '2026-09-04T14:59:59.999Z' },
+    { user_id: 'after-range', role: 'member', joined_at: '2026-09-04T15:00:00Z' },
+    { user_id: 'admin', role: 'admin', joined_at: '2026-09-02T15:00:00Z' },
+    { user_id: 'unknown-date', role: 'member', joined_at: null },
+    { user_id: 'invalid-date', role: 'member', joined_at: 'invalid' },
+  ];
+  const { data } = await loadTableDashboard(env, { startDate: '2026-09-01', endDate: '2026-09-04' }, { now, fetch: fixtureFetch({ users }) });
+  assert.deepEqual(data.members.members_daily, [
+    { date: '2026-09-01', cumulative_members: 3, new_members: 2 },
+    { date: '2026-09-02', cumulative_members: 4, new_members: 1 },
+    { date: '2026-09-03', cumulative_members: 4, new_members: 0 },
+    { date: '2026-09-04', cumulative_members: 5, new_members: 1 },
+  ]);
+  assert.equal(data.members.members_daily.reduce((sum, row) => sum + row.new_members, 0), data.members.kpis.current.new_members);
+});
+
+test('daily cumulative signups include withdrawn and pending accounts in a single-day range', async () => {
+  const joined_at = '2026-09-01T00:00:00Z';
+  const users = [
+    { user_id: 'baseline', role: 'member', joined_at: '2026-08-01T00:00:00Z', account_status: 'active' },
+    { user_id: 'active', role: 'member', joined_at, account_status: 'active' },
+    { user_id: 'pending', role: 'member', joined_at, account_status: 'pending_withdrawal' },
+    { user_id: 'suspended', role: 'member', joined_at, account_status: 'suspended' },
+    { user_id: 'withdrawn', role: 'member', joined_at, account_status: 'withdrawn', withdrawn_at: '2026-09-02T00:00:00Z' },
+    { user_id: 'legacy-withdrawn', role: 'member', joined_at, department_code: 'withdrawn' },
+    { user_id: 'admin', role: 'admin', joined_at },
+  ];
+  const { data } = await loadTableDashboard(env, { startDate: '2026-09-01', endDate: '2026-09-01' }, { now, fetch: fixtureFetch({ users }, Infinity, () => {}, ['account_status', 'withdrawn_at']) });
+  assert.deepEqual(data.members.members_daily, [{ date: '2026-09-01', cumulative_members: 6, new_members: 5 }]);
+  assert.equal(data.members.kpis.current.new_members, 5);
+  assert.equal(data.members.kpis.current.total_members, 4);
+});
+
+test('daily signups include leap day and return measured zeros for empty past dates', async () => {
+  const { data } = await loadTableDashboard(env, { startDate: '2024-02-28', endDate: '2024-03-01' }, { now, fetch: fixtureFetch() });
+  assert.deepEqual(data.members.members_daily, [
+    { date: '2024-02-28', cumulative_members: 0, new_members: 0 },
+    { date: '2024-02-29', cumulative_members: 0, new_members: 0 },
+    { date: '2024-03-01', cumulative_members: 0, new_members: 0 },
+  ]);
+});
+
+test('daily signups stop at the request snapshot and leave future dates unavailable', async () => {
+  const snapshot = Date.parse('2026-09-02T03:00:00Z');
+  const users = [
+    { user_id: 'baseline', role: 'member', joined_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'yesterday', role: 'member', joined_at: '2026-08-31T15:00:00Z' },
+    { user_id: 'today', role: 'member', joined_at: '2026-09-01T15:00:00Z' },
+    { user_id: 'at-snapshot', role: 'member', joined_at: '2026-09-02T03:00:00Z' },
+    { user_id: 'later-today', role: 'member', joined_at: '2026-09-02T03:00:00.001Z' },
+    { user_id: 'tomorrow', role: 'member', joined_at: '2026-09-02T15:00:00Z' },
+  ];
+  const { data } = await loadTableDashboard(env, { startDate: '2026-09-01', endDate: '2026-09-03' }, { now: snapshot, fetch: fixtureFetch({ users }) });
+  assert.deepEqual(data.members.members_daily, [
+    { date: '2026-09-01', cumulative_members: 2, new_members: 1 },
+    { date: '2026-09-02', cumulative_members: 4, new_members: 2 },
+    { date: '2026-09-03', cumulative_members: null, new_members: null },
+  ]);
+  assert.equal(data.members.members_daily.reduce((sum, row) => sum + (row.new_members ?? 0), 0), data.members.kpis.current.new_members);
+});
+
+test('daily new signups reconcile with the selected-period KPI through today', async () => {
+  const snapshot = Date.parse('2026-09-02T03:00:00Z');
+  const users = [
+    { user_id: 'baseline', role: 'member', joined_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'yesterday', role: 'member', joined_at: '2026-08-31T15:00:00Z' },
+    { user_id: 'today', role: 'member', joined_at: '2026-09-01T15:00:00Z' },
+  ];
+  const { data } = await loadTableDashboard(env, { startDate: '2026-09-01', endDate: '2026-09-02' }, { now: snapshot, fetch: fixtureFetch({ users }) });
+  assert.equal(data.members.members_daily.reduce((sum, row) => sum + row.new_members, 0), data.members.kpis.current.new_members);
+  assert.deepEqual(data.members.members_daily.at(-1), { date: '2026-09-02', cumulative_members: 3, new_members: 1 });
+});
+
+test('daily signups leave an entirely future range unavailable even with an existing baseline', async () => {
+  const users = [{ user_id: 'baseline', role: 'member', joined_at: '2026-08-01T00:00:00Z' }];
+  const { data } = await loadTableDashboard(env, { startDate: '2026-10-01', endDate: '2026-10-01' }, { now, fetch: fixtureFetch({ users }) });
+  assert.deepEqual(data.members.members_daily, [{ date: '2026-10-01', cumulative_members: null, new_members: null }]);
+});
+
 test('funnels consume event linkage columns and preserve account exclusions across business and event cohorts', async () => {
   const fixtures = {
     users: [{ user_id: 'member', role: 'member' }, { user_id: 'admin', role: 'admin' }],

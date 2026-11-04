@@ -142,6 +142,7 @@ export async function loadTableDashboard(env, body, options = {}) {
   const monday = today - (weekday - 1) * DAY;
   const weeks = Array.from({ length: 7 }, (_, i) => [monday - (7 - i) * 7 * DAY, monday - (6 - i) * 7 * DAY]);
   const registeredUsers = tables.users.filter(row => row.role !== 'admin');
+  const signupTimes = registeredUsers.map(row => stamp(row.joined_at)).filter(time => Number.isFinite(time) && time <= now);
   const withdrawnUsers = registeredUsers.filter(isWithdrawn);
   const users = registeredUsers.filter(row => !isWithdrawn(row));
   const memberIds = new Set(users.map(row => row.user_id));
@@ -170,7 +171,7 @@ export async function loadTableDashboard(env, body, options = {}) {
   const byCategory = (rows, metric) => sortCategories(groups(rows, row => primaryCategories.get(row.item_id) || '미분류', metric).map(({ key, ...rest }) => ({ category_name: key, ...rest })));
   const saleDays = period => completed(period).map(row => (stamp(row.completed_at) - stamp(itemMap.get(row.item_id)?.created_at)) / DAY).filter(value => Number.isFinite(value) && value >= 0);
   const coreKpi = period => ({ completed_trades: completed(period).length, trade_conversion_rate: null, sale_success_rate: null, guest_conversion_rate: null, registration_completion_rate: null });
-  const memberKpi = period => ({ new_guests: null, new_members: registeredUsers.filter(row => inside(row.joined_at, period)).length, total_members: users.filter(row => stamp(row.joined_at) < period[1]).length, active_member_rate: covered(period) ? rate(active(period), users.filter(row => stamp(row.joined_at) < period[1]).length) : null, week_4_retention_rate: null });
+  const memberKpi = period => ({ new_guests: null, new_members: signupTimes.filter(time => time >= period[0] && time < period[1]).length, total_members: users.filter(row => stamp(row.joined_at) < period[1]).length, active_member_rate: covered(period) ? rate(active(period), users.filter(row => stamp(row.joined_at) < period[1]).length) : null, week_4_retention_rate: null });
   const supplyKpi = period => { const rows = created(items, period); const sellers = unique(rows, 'seller_id'); return { new_items: rows.length, unique_sellers: sellers, average_items_per_seller: sellers ? rows.length / sellers : null, completed_sales: completed(period).length, average_days_to_sell: average(saleDays(period)) }; };
   const engagementKpi = period => {
     const done = completed(period);
@@ -210,6 +211,11 @@ export async function loadTableDashboard(env, body, options = {}) {
     funnels: buildFunnels(events, trades, { period: current, now }),
     operations: { reservation_fulfillment: { reserved_trades: reserved.length, completed_trades: fulfilled, fulfillment_rate: rate(fulfilled, reserved.length), cancelled_or_verified_no_show_trades: cancelled, cancel_or_no_show_rate: rate(cancelled, reserved.length) }, reports: { received_in_period: received.length, current_backlog: tables.reports.filter(row => ['received', 'reviewing'].includes(row.report_status)).length, resolution_sla: { resolved_reports: resolutions.length, median_hours: quantile(0.5), p90_hours: quantile(0.9) } }, notification_read_performance: groups(notificationRows, 'notification_type', 'notifications').map(row => ({ ...row, read_rate: rate(notificationRows.filter(n => n.notification_type === row.notification_type && n.read_at).length, row.notifications) })) },
   };
+  data.members.members_daily = days.map(([dayStart, dayEnd]) => ({
+    date: label(dayStart),
+    cumulative_members: dayStart > now ? null : signupTimes.filter(time => time < dayEnd).length,
+    new_members: dayStart > now ? null : signupTimes.filter(time => time >= dayStart && time < dayEnd).length,
+  }));
   // Current snapshots: date filters cannot reconstruct earlier profile settings
   // or lifetime view_count values. Item dormitories never use seller profiles.
   data.members.dormitory_distribution = groups(users, row => row.dormitory_code || '', 'members')
@@ -244,6 +250,7 @@ export async function loadTableDashboard(env, body, options = {}) {
     '퍼널은 선택 기간에 시작한 이용 기록을 기준으로 후속 단계를 관찰 기간까지 연결합니다. 모든 중간 단계가 있어야 완료로 집계하며, 관찰 기간이 끝나지 않은 코호트의 전환율은 잠정값입니다. 수집 이전 기록은 복원하지 않습니다.',
     '활성 회원은 수집된 이용 기록 기준입니다. 수집되지 않은 활동은 포함되지 않으며, 기록 범위 밖의 빈 기간은 미집계입니다.',
     '회원 수는 현재 탈퇴 완료되지 않은 계정 기준이며 탈퇴 처리 중·이용 정지 계정도 포함합니다. 신규 회원·누적 가입 추이는 탈퇴 계정의 가입 이력도 포함합니다. 계정 상태는 현재 기준이며 주별 탈퇴율은 미집계입니다.',
+    '일별 누적·신규 가입은 선택 기간의 한국 시간 기준이며 관리자 제외·탈퇴 계정 가입 이력 포함입니다. 누적 가입은 현재 회원 수와 다릅니다. 신규 회원 카드와 일별 추이는 같은 조회 시점까지 집계하며, 미래 날짜의 추이는 미집계로 표시합니다.',
     userSchema.accountStatus ? '계정 상태는 정상·탈퇴 처리 중·탈퇴 등 저장된 값으로 구분합니다. account_status, 탈퇴 처리 학과 코드 또는 withdrawn_at으로 확인된 탈퇴 완료 계정은 제외합니다.' : '계정 상태 컬럼이 없는 기존 DB는 탈퇴 처리 학과 코드와 사용 가능한 탈퇴 시각으로 가입·탈퇴를 구분합니다. 이용 정지 상태는 추정하지 않습니다.',
     '학과는 앱의 공식 코드 라벨을 사용합니다. 직접 입력한 학과명은 그대로 구분하고 미입력·알 수 없는 코드는 기타/미입력으로 묶습니다. 찜은 현재 남아 있는 기록만 포함합니다.',
     '상품 상태·미판매 기간·신고 적체·예약 결과·알림 읽음 여부는 조회 시점의 현재 상태입니다. 과거 날짜를 선택해도 당시 상태로 복원되지 않습니다.',

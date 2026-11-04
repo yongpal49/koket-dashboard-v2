@@ -19,4 +19,12 @@ Reuse `KpiCard`, `FunnelBlock`, `ChartCard`, `MetricTable`, `EmptyNotice` and th
 
 ## Verification and scope
 
+## Daily membership trends
+
+The members page starts with two existing `ChartCard` primitives: a `TrendLines` chart for cumulative signups and `VerticalBars` for daily new signups. Both use the global selected date range and Asia/Seoul day boundaries. Their opt-in integer count axes reuse the existing muted axis type; bars name the new-signup measure in the tooltip. Existing consumers retain their defaults. Keep the existing two-column desktop grid and single-column mobile layout, chart colors, tooltips, and no-animation behavior. Replace the lower completed-week cumulative card to avoid duplicate growth charts.
+
+Label cumulative signups explicitly: administrator accounts are excluded; retained signup histories of withdrawn accounts are included. This is not historical net membership and can differ from the current surviving-account KPI. Zero-signup days are zero; future days are unavailable; today's count is provisional. If an older API lacks the daily field, show an unavailable message rather than inventing daily values from weekly data. Existing activity and retention remain unchanged.
+
+Verify the selected period, zero days, one day, tooltip counts, current/future boundaries, and phone/desktop layout. Reuse the existing light theme and date controls; this change adds no runtime, telemetry, font, or motion dependencies.
+
 Verify populated business data, empty events and provisional event cohorts in the browser and unit tests. Existing unrelated dashboard layout and performance are outside this data repair. No new development runtime or telemetry is introduced.

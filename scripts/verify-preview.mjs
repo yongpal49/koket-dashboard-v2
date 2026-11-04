@@ -30,6 +30,16 @@ const tables = {
   trade_status_history: ['reviewed', 'completed', 'reserved'].map(trade_id => ({ trade_status_history_id: `history-${trade_id}`, trade_id, to_status: 'reserved', created_at: stepAt(10) })),
   reviews: [{ review_id: 'review', trade_id: 'reviewed', created_at: stepAt(30) }],
 };
+if (process.argv.includes('--with-member-trends')) {
+  for (let day = 1; day <= 35; day++) {
+    const count = day % 6 === 0 ? 0 : (day % 4) + 1;
+    for (let index = 0; index < count; index++) tables.users.push({
+      user_id: `signup-${day}-${index}`, role: 'member',
+      joined_at: new Date(Date.parse(at) - day * 86400000).toISOString(),
+      account_status: 'active', department_code: 'computer_engineering',
+    });
+  }
+}
 if (process.argv.includes('--with-funnel-events')) {
   tables.analytics_events.push(...['start_item_registration', 'preview_item', 'create_item'].map((event_name, i) => ({ event_id: `listing-${i}`, event_name, user_id: 'member', anonymous_id: 'fixture-device', session_id: 'fixture-session', user_role: 'member', occurred_at: stepAt(i * 10), properties: {}, platform: 'web', app_version: 'test' })));
 }
